@@ -1,92 +1,75 @@
-# St Cli
+# st-cli
 
+Sensor Tower 命令行工具：**Cookie 提取**对齐 rdt-cli：`uv run --with browser-cookie3` 子进程读库（避免 SQLite 锁）。**HTTP 头**按 Sensor Tower 网页里对 `/api/*` 的 XHR（带 `Origin`、`Referer`、`X-Requested-With`），与 Reddit 的只读接口头不完全相同。Cookie 写入 `~/.config/st-cli/credential.json`，请求走 **httpx**。
 
+## 依赖
 
-## Getting started
+- Python 3.10+
+- 本机已用浏览器登录过 [Sensor Tower](https://app.sensortower.com)（Chrome / Firefox / Edge / Brave 之一，供 `st login` 读 Cookie）
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+## 安装
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
-
-## Add your files
-
-- [ ] [Create](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#create-a-file) or [upload](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#upload-a-file) files
-- [ ] [Add files using the command line](https://docs.gitlab.com/ee/gitlab-basics/add-file.html#add-a-file-using-the-command-line) or push an existing Git repository with the following command:
-
-```
-cd existing_repo
-git remote add origin https://gitlab.lizhi.fm/hongmaodan/st-cli.git
-git branch -M master
-git push -uf origin master
+```bash
+cd /path/to/st-cli
+uv sync
 ```
 
-## Integrate with your tools
+## 认证
 
-- [ ] [Set up project integrations](https://gitlab.lizhi.fm/hongmaodan/st-cli/-/settings/integrations)
+1. 在浏览器中打开并登录 `https://app.sensortower.com`。
+2. 在同一台机器上执行：
 
-## Collaborate with your team
+```bash
+uv run st login --json
+```
 
-- [ ] [Invite team members and collaborators](https://docs.gitlab.com/ee/user/project/members/)
-- [ ] [Create a new merge request](https://docs.gitlab.com/ee/user/project/merge_requests/creating_merge_requests.html)
-- [ ] [Automatically close issues from merge requests](https://docs.gitlab.com/ee/user/project/issues/managing_issues.html#closing-issues-automatically)
-- [ ] [Enable merge request approvals](https://docs.gitlab.com/ee/user/project/merge_requests/approvals/)
-- [ ] [Set auto-merge](https://docs.gitlab.com/ee/user/project/merge_requests/merge_when_pipeline_succeeds.html)
+会话文件：`~/.config/st-cli/credential.json`（权限 `600`）。过期策略见 `st_cli/auth.py`（默认可尝试从浏览器自动刷新）。
 
-## Test and Deploy
+退出登录：
 
-Use the built-in continuous integration in GitLab.
+```bash
+uv run st logout
+```
 
-- [ ] [Get started with GitLab CI/CD](https://docs.gitlab.com/ee/ci/quick_start/index.html)
-- [ ] [Analyze your code for known vulnerabilities with Static Application Security Testing(SAST)](https://docs.gitlab.com/ee/user/application_security/sast/)
-- [ ] [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/ee/topics/autodevops/requirements.html)
-- [ ] [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/ee/user/clusters/agent/)
-- [ ] [Set up protected environments](https://docs.gitlab.com/ee/ci/environments/protected_environments.html)
+### 已登录但 `st login` 仍报 403 / `api_ok: false`
 
-***
+1. **先完全退出 Chrome（或你用来登录 ST 的浏览器）再执行 `st login`**，与 rdt-cli 一样用子进程读 Cookie，避免 SQLite 锁导致读到旧/空数据。
+2. **Chrome 非 Default 配置**：`export ST_CHROME_COOKIES_DB="$HOME/Library/Application Support/Google/Chrome/Profile 1/Cookies"`（路径按本机 Profile 名），再 `uv run st login`。
+3. 提取到的 Cookie 必须至少包含 `sessionToken`、`sensor_tower_session`、`.ASPXAUTH` 之一（见 `constants.REQUIRED_COOKIES`），否则不会保存。
+4. 仍 403 时看 `details.body_preview`；若为空，多为边缘/WAF，可换网络或稍后重试。
 
-# Editing this README
+## 命令
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thank you to [makeareadme.com](https://www.makeareadme.com/) for this template.
+| 命令 | 说明 |
+|------|------|
+| `st login` | 从浏览器提取并保存 Cookie，并探测 autocomplete API |
+| `st logout` | 删除已保存的凭据文件 |
+| `st status` | 用当前凭据探测 ST API 是否可用 |
+| `st fetch "<URL 或 应用名>"` | 自动完成 → `internal_entities` → **最近 36 个月** `/api/apps/facets` 收入 |
+| `st batch -f queries.txt` | 对文件中每行执行与 `fetch` 相同的流水线（每行取自动完成第一条） |
 
-## Suggestions for a good README
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+多结果时 `fetch` 会返回 `needs_disambiguation` 与 `candidates`，请再执行：
 
-## Name
-Choose a self-explaining name for your project.
+```bash
+st fetch "Duolingo" --pick 1 --json
+```
 
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
+## 输出
 
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
+默认与 `rdt-cli` 类似：非 TTY 输出 YAML；`--json` 输出结构化 envelope：
 
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
+```json
+{ "ok": true, "schema_version": "1", "data": { ... } }
+```
 
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+## 开发
 
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
+```bash
+uv run pytest
+uv run ruff check st_cli tests
+```
 
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
+## 说明
 
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
-
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
-
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
-
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
-
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
-
-## License
-For open source projects, say how it is licensed.
-
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+- 月度收入来自 ST 的 **`/api/apps/facets`**，按自然月拆分请求（36 次），请勿并发过猛。
+- 若 ST 改版导致字段变化，需调整 `st_cli/st_api.py` 中的解析逻辑。
