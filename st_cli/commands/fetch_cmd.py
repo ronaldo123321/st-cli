@@ -1,4 +1,4 @@
-"""st fetch — resolve app by URL or name, pull ~36 months revenue via /api/apps/facets."""
+"""st fetch — resolve app by URL or name, pull ~12 months revenue via /api/apps/facets."""
 
 import logging
 

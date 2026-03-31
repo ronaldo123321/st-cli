@@ -1,17 +1,21 @@
 # st-cli
 
-源码仓库：<https://github.com/ronaldo123321/st-cli>（`git clone https://github.com/ronaldo123321/st-cli.git`）
+源码仓库：<https://github.com/ronaldo123321/st-cli>（`git clone https://github.com/ronaldo123321/st-cli.git`）。
 
-Sensor Tower 命令行工具：**Cookie 提取**对齐 rdt-cli：`uv run --with browser-cookie3` 子进程读库（避免 SQLite 锁）。**HTTP 头**按 Sensor Tower 网页里对 `/api/*` 的 XHR（带 `Origin`、`Referer`、`X-Requested-With`），与 Reddit 的只读接口头不完全相同。Cookie 写入 `~/.config/st-cli/credential.json`，请求走 **httpx**。
+这是一个基于浏览器 Cookie 登录的 Sensor Tower 命令行工具（类似 rdt-cli 的登录体验）：
+
+- **登录方式**：从本机浏览器提取 Cookie（不需要手动复制 token）
+- **数据来源**：调用 Sensor Tower 网页端使用的 `/api/*` 接口（httpx）
+- **凭据位置**：`~/.config/st-cli/credential.json`
 
 ## 依赖
 
 - Python 3.10+
-- 本机已用浏览器登录过 [Sensor Tower](https://app.sensortower.com)（Chrome / Firefox / Edge / Brave 之一，供 `st login` 读 Cookie）
+- 本机浏览器已登录过 [Sensor Tower](https://app.sensortower.com)（Chrome / Firefox / Edge / Brave 之一，供 `st login` 读取 Cookie）
 
 ## 安装
 
-推荐给他人使用（全局安装，像 rdt-cli 一样直接 `st ...`）：
+推荐给他人使用（全局安装，像 rdt-cli 一样直接 `st ...`）。
 
 PyPI 上的包名是 **`sensortower-st-cli`**（`st-cli` 与已有项目名过于相似，无法占用）；安装后命令行仍是 **`st`**。
 
@@ -21,14 +25,14 @@ uv tool install sensortower-st-cli
 
 ## 认证
 
-1. 在浏览器中打开并登录 `https://app.sensortower.com`。
-2. 在同一台机器上执行：
+1. 在浏览器中打开并登录 `https://app.sensortower.com`
+2. 在同一台机器上执行
 
 ```bash
 st login --json
 ```
 
-会话文件：`~/.config/st-cli/credential.json`（权限 `600`）。过期策略见 `st_cli/auth.py`（默认可尝试从浏览器自动刷新）。
+会话文件：`~/.config/st-cli/credential.json`（权限 `600`）。
 
 退出登录：
 
@@ -38,26 +42,76 @@ st logout
 
 ### 已登录但 `st login` 仍报 403 / `api_ok: false`
 
-1. **先完全退出 Chrome（或你用来登录 ST 的浏览器）再执行 `st login`**，与 rdt-cli 一样用子进程读 Cookie，避免 SQLite 锁导致读到旧/空数据。
-2. **Chrome 非 Default 配置**：`export ST_CHROME_COOKIES_DB="$HOME/Library/Application Support/Google/Chrome/Profile 1/Cookies"`（路径按本机 Profile 名），再 `uv run st login`。
-3. 提取到的 Cookie 必须至少包含 `sessionToken`、`sensor_tower_session`、`.ASPXAUTH` 之一（见 `constants.REQUIRED_COOKIES`），否则不会保存。
-4. 仍 403 时看 `details.body_preview`；若为空，多为边缘/WAF，可换网络或稍后重试。
+按下面顺序排查（大多数情况第 1 条就能解决）：
 
-## 命令
+1. **完全退出浏览器后重试**：先彻底退出 Chrome/Brave/Edge/Firefox，再执行 `st login`（避免 Cookie SQLite 锁导致读到旧/空数据）。
+2. **指定 Chrome Cookies 路径**（多 Profile 场景常见）：
+
+```bash
+export ST_CHROME_COOKIES_DB="$HOME/Library/Application Support/Google/Chrome/Profile 1/Cookies"
+st login --json
+```
+
+3. **看错误详情**：若是 403，重点看 `st status --json` 返回里的 `response_headers` / `body_preview`；如果出现 Cloudflare 相关头（例如 `cf-ray`），可能是网络/WAF 限制，换网络或稍后重试。
+
+## 快速开始（复制粘贴即可）
+
+```bash
+# 1) 登录
+st login --json
+
+# 2) 检查会话可用
+st status --json
+
+# 3) 拉一个应用的“最近 12 个月”月度收入（估算）
+st fetch "QuickBooks" --json
+```
+
+## 常用命令一览
 
 | 命令 | 说明 |
 |------|------|
 | `st login` | 从浏览器提取并保存 Cookie，并探测 autocomplete API |
 | `st logout` | 删除已保存的凭据文件 |
 | `st status` | 用当前凭据探测 ST API 是否可用 |
-| `st fetch "<URL 或 应用名>"` | 自动完成 → `internal_entities` → **最近 36 个月** `/api/apps/facets` 收入 |
+| `st fetch "<URL 或 应用名>"` | 自动完成 → 解析 app → 拉取 **最近 12 个月**月度收入（估算） |
 | `st batch -f queries.txt` | 对文件中每行执行与 `fetch` 相同的流水线（每行取自动完成第一条） |
+| `st landscape ...` | 生成竞品格局 Markdown 报告（见下文示例） |
 
 多结果时 `fetch` 会返回 `needs_disambiguation` 与 `candidates`，请再执行：
 
 ```bash
 st fetch "Duolingo" --pick 1 --json
 ```
+
+## 竞品格局（`st landscape`）
+
+准备一个竞品名单文件（每行一个名称）：
+
+```text
+QuickBooks
+Xero
+Zoho Books
+Wave
+FreshBooks
+Sage
+```
+
+然后运行（示例）：
+
+```bash
+ST_FACET_REGIONS=global st landscape \
+  --names-file competitors_batch1.txt \
+  --category 0 \
+  --limit 6 \
+  --json \
+  --out report.md
+```
+
+- **`ST_FACET_REGIONS=global`**：用于市场份额/Top apps 的分母口径（内部会展开成一组区域列表）
+- **`--category`**：用于市场份额分母（SensorTower category id）。不确定时可先用 `0`，但这会让 “share” 变成“全市场 proxy”，解释时要小心
+- **`--limit`**：最多输出 N 个竞品（会对输入名单做解析/匹配，个别名称可能解析失败）
+- **`--out`**：生成 Markdown 报告路径
 
 ## 输出
 
@@ -66,6 +120,22 @@ st fetch "Duolingo" --pick 1 --json
 ```json
 { "ok": true, "schema_version": "1", "data": { ... } }
 ```
+
+## FAQ
+
+### 为什么会很慢？
+
+很多接口需要按月份窗口拆分请求（例如 12 个月就可能有 12 次请求），且 Sensor Tower 侧可能对请求频率敏感。
+
+### 为什么会卡住/没有输出文件？
+
+通常是某个请求被 WAF/网络阻断或长时间等待。建议先跑：
+
+```bash
+st status --json
+```
+
+并单独用 `st fetch "<name>" --json` 验证某个名称能否被正常解析与拉取。
 
 ## 开发
 
@@ -76,5 +146,5 @@ uv run ruff check st_cli tests
 
 ## 说明
 
-- 月度收入来自 ST 的 **`/api/apps/facets`**，按自然月拆分请求（36 次），请勿并发过猛。
-- 若 ST 改版导致字段变化，需调整 `st_cli/st_api.py` 中的解析逻辑。
+- 月度收入/份额相关数据来自 ST 的 `/api/*`，通常需要多次请求拼装结果，请避免并发过猛。
+- 若 ST 改版导致字段变化，需调整 `st_cli/st_api.py` / `st_cli/pipeline.py` 的解析逻辑。
