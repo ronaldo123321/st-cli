@@ -19,8 +19,8 @@ dependencies = [
 st = "st_cli.cli:cli"
 
 [project.urls]
-Homepage = "https://github.com/gaobo/st-cli"
-Repository = "https://github.com/gaobo/st-cli"
+Homepage = "https://github.com/ronaldo123321/st-cli"
+Repository = "https://github.com/ronaldo123321/st-cli"
 
 [tool.hatch.build.targets.wheel]
 packages = ["st_cli"]

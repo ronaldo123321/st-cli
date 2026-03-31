@@ -1,5 +1,7 @@
 # st-cli
 
+源码仓库：<https://github.com/ronaldo123321/st-cli>（`git clone https://github.com/ronaldo123321/st-cli.git`）
+
 Sensor Tower 命令行工具：**Cookie 提取**对齐 rdt-cli：`uv run --with browser-cookie3` 子进程读库（避免 SQLite 锁）。**HTTP 头**按 Sensor Tower 网页里对 `/api/*` 的 XHR（带 `Origin`、`Referer`、`X-Requested-With`），与 Reddit 的只读接口头不完全相同。Cookie 写入 `~/.config/st-cli/credential.json`，请求走 **httpx**。
 
 ## 依赖
