@@ -816,21 +816,48 @@ def _render_report_md(*, source: dict[str, Any], competitors: list[dict[str, Any
 
 
 @click.command("landscape")
-@click.option("--rdt-report", "rdt_report", type=click.Path(exists=True, dir_okay=False, path_type=Path), required=True)
+@click.option(
+    "--rdt-report",
+    "rdt_report",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    required=False,
+    default=None,
+    help="Path to rdt-cli-research markdown report (optional).",
+)
+@click.option(
+    "--name",
+    "names",
+    multiple=True,
+    help="Competitor name. Repeatable, e.g. --name \"Expensify\" --name \"QuickBooks\"",
+)
+@click.option(
+    "--names-file",
+    "names_file",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    required=False,
+    default=None,
+    help="Text file with one competitor name per line (optional).",
+)
 @click.option("--limit", "limit", type=int, default=12, show_default=True, help="Max competitors to include")
 @click.option("--category", "category", type=int, default=0, show_default=True, help="SensorTower category id for market share denominator (0=all apps)")
 @click.option("--out", "out_path", type=click.Path(dir_okay=False, path_type=Path), default=None, help="Write final report markdown to this path")
 @click.option("--json", "as_json", is_flag=True)
 @click.option("--yaml", "as_yaml", is_flag=True)
 def landscape(
-    rdt_report: Path,
+    rdt_report: Path | None,
+    names: tuple[str, ...],
+    names_file: Path | None,
     limit: int,
     category: int,
     out_path: Path | None,
     as_json: bool,
     as_yaml: bool,
 ) -> None:
-    """Prepare competitive landscape input data from a rdt-cli-research markdown report."""
+    """Prepare competitive landscape input data from either:
+
+    - a rdt-cli-research markdown report (competitor table), or
+    - a list of competitor names.
+    """
     cred = get_credential()
     if not cred or not cred.cookies:
         print_payload(
@@ -844,19 +871,60 @@ def landscape(
         )
         raise SystemExit(1)
 
-    md = rdt_report.read_text(encoding="utf-8", errors="ignore")
-    competitors = _extract_competitor_table_rows(md)
+    competitors: list[CompetitorRow] = []
+    source_input: dict[str, Any] = {}
+
+    if rdt_report is not None:
+        md = rdt_report.read_text(encoding="utf-8", errors="ignore")
+        competitors = _extract_competitor_table_rows(md)
+        source_input["rdt_report"] = str(rdt_report)
+        if not competitors:
+            print_payload(
+                error_payload(
+                    "bad_request",
+                    "Could not find competitor table in rdt report (section '竞品生态').",
+                    {"rdt_report": str(rdt_report)},
+                ),
+                as_json=as_json,
+                as_yaml=as_yaml,
+            )
+            raise SystemExit(1)
+
     if not competitors:
-        print_payload(
-            error_payload(
-                "bad_request",
-                "Could not find competitor table in rdt report (section '竞品生态').",
-                {"rdt_report": str(rdt_report)},
-            ),
-            as_json=as_json,
-            as_yaml=as_yaml,
-        )
-        raise SystemExit(1)
+        seen: set[str] = set()
+        all_names: list[str] = []
+        for n in names:
+            s = _normalize_text(n)
+            if not s or s in seen:
+                continue
+            seen.add(s)
+            all_names.append(s)
+        if names_file is not None:
+            for line in names_file.read_text(encoding="utf-8", errors="ignore").splitlines():
+                s = _normalize_text(line)
+                if not s or s.startswith("#") or s in seen:
+                    continue
+                seen.add(s)
+                all_names.append(s)
+            source_input["names_file"] = str(names_file)
+
+        if not all_names:
+            print_payload(
+                error_payload(
+                    "bad_request",
+                    "Provide either --rdt-report or at least one --name/--names-file.",
+                    None,
+                ),
+                as_json=as_json,
+                as_yaml=as_yaml,
+            )
+            raise SystemExit(1)
+
+        source_input["names"] = all_names
+        competitors = [
+            CompetitorRow(name=n, mentions=None, positive=None, negative=None, core_review="")
+            for n in all_names
+        ]
 
     month_start, month_end = _current_month_as_of()
     month_key = month_start.strftime("%Y-%m")
@@ -943,7 +1011,7 @@ def landscape(
 
     data = {
         "source": {
-            "rdt_report": str(rdt_report),
+            **source_input,
             "month": month_key,
             "as_of": month_end.isoformat(),
             "facet_regions": DEFAULT_FACET_REGIONS,
