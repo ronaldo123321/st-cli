@@ -1,0 +1,150 @@
+---
+name: st-competitive-research
+description: Generate a competitive research report by discovering competitors with rdt-cli (optional) and enriching each competitor with SensorTower metrics via st-cli (revenue as-of current month, 6-month growth ratio, first release date, market share). Use when the user asks for 竞品调研/竞品分析/竞争格局/landscape report and wants a final Markdown report.
+---
+
+# st-competitive-research
+
+## Goal
+
+Produce a **single Markdown competitive research report** that includes:
+
+- **Market size**: proxy using SensorTower top apps revenue (as-of current month).
+- **Competitor list**: discovered from Reddit (optional) or provided by user.
+- **Per-competitor metrics** from SensorTower (via `st landscape`):
+  - **Revenue (as-of current month, USD)**
+  - **Past 6 Months Growth** (ratio: current month / 6 months prior)
+  - **First release date**
+  - **Market share (as-of current month)** within a chosen `category`
+  - **Key Strength / Weakness** derived **only** from SensorTower review snippets
+
+## Pre-flight check (must run first)
+
+Run one Bash call. If any check fails, **stop** and return the error to the user with the exact fix command(s).
+
+```bash
+python3 -c "
+import json, platform, shutil, subprocess, sys
+
+errors=[]
+is_win = platform.system() == 'Windows'
+
+# Python >= 3.10
+v = sys.version_info
+if (v.major, v.minor) < (3, 10):
+    errors.append(f'Python {v.major}.{v.minor} — need 3.10+')
+else:
+    print(f'OK Python {v.major}.{v.minor}.{v.micro}')
+
+def run(cmd, timeout=15):
+    return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, shell=is_win)
+
+# uv
+if not shutil.which('uv'):
+    errors.append('uv not found. Install: https://astral.sh/uv')
+else:
+    print('OK uv')
+
+# rdt-cli (optional but recommended)
+if not shutil.which('rdt'):
+    print('WARN rdt not found (skip Reddit competitor discovery). Install: uv tool install rdt-cli')
+else:
+    r = run(['rdt','status','--json'], timeout=20)
+    if r.returncode != 0:
+        errors.append('rdt status failed. Run: rdt login')
+    else:
+        try:
+            data=json.loads(r.stdout)
+            if data.get('data',{}).get('authenticated'):
+                print('OK rdt authenticated')
+            else:
+                errors.append('Reddit not logged in. Run: rdt login')
+        except Exception:
+            errors.append('rdt status JSON parse failed. Run: rdt login')
+
+# st-cli
+if not shutil.which('st'):
+    errors.append('st not found. Install: uv tool install sensortower-st-cli')
+else:
+    r = run(['st','status','--json'], timeout=25)
+    if r.returncode != 0:
+        errors.append('st status failed. Run: st login (ensure browser logged into app.sensortower.com)')
+    else:
+        try:
+            data=json.loads(r.stdout)
+            ok = data.get('ok')
+            logged_in = (data.get('data') or {}).get('logged_in')
+            if ok and logged_in:
+                print('OK SensorTower authenticated')
+            else:
+                errors.append('SensorTower not logged in. Run: st login (ensure browser logged into app.sensortower.com)')
+        except Exception:
+            errors.append('st status JSON parse failed. Run: st login')
+
+if errors:
+    print('ERRORS: ' + '; '.join(errors))
+    sys.exit(1)
+print('ALL_OK')
+"
+```
+
+## Inputs to collect from the user (ask these questions)
+
+1. **Topic**: what market / product space?
+2. **Competitor source**:
+   - A) Provide a competitor list now (recommended for reliability), OR
+   - B) Let rdt-cli discover competitors from Reddit.
+3. **Category id** for market share denominator (SensorTower `category`).
+   - If unsure, default to `0` (all apps) but **warn** that share becomes “global app market share”.
+4. **Regions**: usually `global` (`ST_FACET_REGIONS=global`).
+5. **Limit**: top N competitors to include (default 8).
+6. **Output path**: `report.md`.
+
+## Workflow
+
+### Path A — user provides competitor names
+
+1. Create `competitors.txt` (one name per line).
+2. Run:
+
+```bash
+ST_FACET_REGIONS=global st landscape \
+  --names-file competitors.txt \
+  --category 0 \
+  --limit 8 \
+  --json \
+  --out report.md
+```
+
+### Path B — discover competitors via rdt-cli (then enrich via SensorTower)
+
+Goal: produce `competitors.txt` then reuse Path A.
+
+1. Build search queries (3–5):
+   - `\"{topic}\" alternatives`
+   - `\"{topic}\" vs`
+   - `best {topic} app`
+   - `recommend {topic}`
+2. Search across 5–8 relevant subreddits (start broad if unsure): `Entrepreneur`, `startups`, `ProductManagement`, `SaaS`, plus domain-specific subs for the topic.
+3. Extract candidate competitor names:
+   - Prefer **explicit product names** repeated across posts/comments.
+   - Keep only names that are likely real products (not generic words).
+4. Write final `competitors.txt` (dedupe, max N=8), then run the same `st landscape` command as Path A.
+
+## Output format (final Markdown)
+
+Use the `report.md` generated by `st landscape --out` as the primary artifact.
+If you need a custom wrapper, prepend a short header and then embed the generated table + details unchanged.
+
+Minimum header:
+
+```markdown
+# Competitive Landscape — {month} Mobile Revenue (as-of {as_of})
+
+## Scope
+- Topic: {topic}
+- Regions: {facet_regions}
+- Category: {category}
+- Data source: SensorTower (st-cli) + Reddit (optional, rdt-cli)
+```
+
