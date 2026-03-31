@@ -13,8 +13,10 @@ Sensor Tower 命令行工具：**Cookie 提取**对齐 rdt-cli：`uv run --with 
 
 推荐给他人使用（全局安装，像 rdt-cli 一样直接 `st ...`）：
 
+PyPI 上的包名是 **`sensortower-st-cli`**（`st-cli` 与已有项目名过于相似，无法占用）；安装后命令行仍是 **`st`**。
+
 ```bash
-uv tool install st-cli
+uv tool install sensortower-st-cli
 ```
 
 ## 认证
