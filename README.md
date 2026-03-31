@@ -9,9 +9,10 @@ Sensor Tower 命令行工具：**Cookie 提取**对齐 rdt-cli：`uv run --with 
 
 ## 安装
 
+推荐给他人使用（全局安装，像 rdt-cli 一样直接 `st ...`）：
+
 ```bash
-cd /path/to/st-cli
-uv sync
+uv tool install st-cli
 ```
 
 ## 认证
@@ -20,7 +21,7 @@ uv sync
 2. 在同一台机器上执行：
 
 ```bash
-uv run st login --json
+st login --json
 ```
 
 会话文件：`~/.config/st-cli/credential.json`（权限 `600`）。过期策略见 `st_cli/auth.py`（默认可尝试从浏览器自动刷新）。
@@ -28,7 +29,7 @@ uv run st login --json
 退出登录：
 
 ```bash
-uv run st logout
+st logout
 ```
 
 ### 已登录但 `st login` 仍报 403 / `api_ok: false`

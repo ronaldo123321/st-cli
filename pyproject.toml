@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "st-cli"
-version = "0.1.0"
+version = "0.1.1"
 description = "Sensor Tower CLI — browser cookies + httpx, JSON envelope for agents"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -17,6 +17,10 @@ dependencies = [
 
 [project.scripts]
 st = "st_cli.cli:cli"
+
+[project.urls]
+Homepage = "https://github.com/gaobo/st-cli"
+Repository = "https://github.com/gaobo/st-cli"
 
 [tool.hatch.build.targets.wheel]
 packages = ["st_cli"]

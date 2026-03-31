@@ -379,6 +379,7 @@ def top_unified_app_ids(
     start_date: date,
     end_date: date,
     comparison_attribute: str,
+    category: int = 0,
     regions: list[str],
     limit: int,
     offset: int = 0,
@@ -390,7 +391,7 @@ def top_unified_app_ids(
         "filters": {
             "measure": measure,
             "comparison_attribute": comparison_attribute,
-            "category": 0,
+            "category": category,
             "devices": ["iphone", "ipad", "android"],
             "regions": regions,
             "start_date": start_date.strftime("%Y-%m-%d"),
@@ -427,7 +428,10 @@ def top_unified_app_ids(
 def extract_revenue_absolute_from_facets_v2_rows(
     facet_rows: list[dict[str, Any]],
 ) -> float | None:
-    """Extract revenueAbsolute from the unified row (`appId is None`)."""
+    """Extract `revenueAbsolute` (USD) from the unified row (`appId is None`).
+
+    Sensor Tower facets v2 commonly returns revenue in cents; we normalize to USD.
+    """
     for row in facet_rows:
         if row.get("appId") is not None:
             continue
@@ -435,12 +439,12 @@ def extract_revenue_absolute_from_facets_v2_rows(
         if val is None or val == "":
             return None
         if isinstance(val, (int, float)):
-            return float(val)
+            return float(val) / 100.0
         s = str(val).strip()
         if not s:
             return None
         try:
-            return float(s)
+            return float(s) / 100.0
         except ValueError:
             return None
     return None
@@ -466,7 +470,10 @@ def extract_unified_app_id_from_facets_v2_rows(
 def extract_total_revenue_absolute_from_facets_v2_rows(
     facet_rows: list[dict[str, Any]],
 ) -> float | None:
-    """Sum `revenueAbsolute` across unified rows (`appId is None`)."""
+    """Sum `revenueAbsolute` (USD) across unified rows (`appId is None`).
+
+    Sensor Tower facets v2 commonly returns revenue in cents; we normalize to USD.
+    """
     total = 0.0
     seen_any = False
     for row in facet_rows:
@@ -477,13 +484,13 @@ def extract_total_revenue_absolute_from_facets_v2_rows(
             continue
         seen_any = True
         if isinstance(val, (int, float)):
-            total += float(val)
+            total += float(val) / 100.0
             continue
         s = str(val).strip()
         if not s:
             continue
         try:
-            total += float(s)
+            total += float(s) / 100.0
         except ValueError:
             continue
     if not seen_any:

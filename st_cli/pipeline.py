@@ -9,6 +9,7 @@ from typing import Any
 
 import httpx
 
+from st_cli.constants import DEFAULT_FACET_REGIONS
 from st_cli.st_api import (
     autocomplete_search,
     extract_store_hints,
@@ -126,7 +127,8 @@ def collect_monthly_revenue(
 ) -> list[dict[str, Any]]:
     """Fill monthly ``revenue_absolute_usd`` for ``MONTH_WINDOW_MONTHS`` calendar months."""
     monthly_estimates: list[dict[str, Any]] = []
-    month_windows = month_ranges_last_n_months(MONTH_WINDOW_MONTHS)
+    # Align with SensorTower "as-of" delay (data available up to ~2 days ago).
+    month_windows = month_ranges_last_n_months(MONTH_WINDOW_MONTHS, end=date.today() - timedelta(days=2))
     for i, (m_start, m_end) in enumerate(month_windows):
         try:
             # v2 requires comparison range (previous month of current month).
@@ -164,6 +166,7 @@ def run_fetch_pipeline(
     *,
     pick_1based: int | None = None,
     auto_pick_first: bool = False,
+    category: int = 0,
 ) -> PipelineSuccess | PipelineDisambiguation | PipelineFailure:
     """Resolve QUERY to ST app and pull monthly revenue (see ``MONTH_WINDOW_MONTHS``).
 
@@ -263,7 +266,8 @@ def run_fetch_pipeline(
             start_date=month_start,
             end_date=month_end,
             comparison_attribute="absolute",
-            regions=["US"],
+            category=category,
+            regions=DEFAULT_FACET_REGIONS,
             limit=MARKET_SHARE_TOP_APPS_LIMIT,
             offset=0,
             csrf_token=csrf_token,
@@ -312,7 +316,7 @@ def run_fetch_pipeline(
                 "proxy": {
                     "denominator_app_ids_count": len(sub_app_ids),
                     "denominator_app_ids_preview": sub_app_ids[:20],
-                    "note": "denominator = facets revenueAbsolute sum over sub_app_ids from top unified apps (US)",
+                    "note": "denominator = facets revenueAbsolute sum over sub_app_ids from top unified apps (regions=DEFAULT_FACET_REGIONS)",
                 },
                 "revenue_absolute_usd": chosen_rev,
                 "market_revenue_absolute_usd": total_rev,
