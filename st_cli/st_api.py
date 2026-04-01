@@ -498,6 +498,27 @@ def extract_total_revenue_absolute_from_facets_v2_rows(
     return total
 
 
+def extract_first_release_date_us_from_facets_v2_rows(
+    facet_rows: list[dict[str, Any]],
+) -> str | None:
+    """Extract first release date (US) from facets v2 unified row.
+
+    We prefer `earliestReleaseDate` when present, then fall back to `releaseDate`.
+    Both are returned as ISO-ish strings by Sensor Tower (often with timezone suffix).
+    """
+    for row in facet_rows:
+        if row.get("appId") is not None:
+            continue
+        for key in ("earliestReleaseDate", "releaseDate"):
+            v = row.get(key)
+            if v is None:
+                continue
+            s = str(v).strip()
+            if s:
+                return s
+    return None
+
+
 def format_date(d: date) -> str:
     """Sensor Tower API expects `YYYY-MM-DD`."""
     return d.strftime("%Y-%m-%d")

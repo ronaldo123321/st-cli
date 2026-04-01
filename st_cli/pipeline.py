@@ -13,6 +13,7 @@ from st_cli.constants import DEFAULT_FACET_REGIONS
 from st_cli.st_api import (
     autocomplete_search,
     extract_store_hints,
+    extract_first_release_date_us_from_facets_v2_rows,
     extract_revenue_absolute_from_facets_v2_rows,
     extract_total_revenue_absolute_from_facets_v2_rows,
     get_csrf_token_for_top_apps_page,
@@ -232,6 +233,7 @@ def run_fetch_pipeline(
     # 2) denominator: sum of revenueAbsolute over sub_app_ids expanded from top unified apps
     #    using the same current-month as-of window.
     market_share_as_of_current_month: dict[str, Any] | None = None
+    first_release_date_us: str | None = None
     try:
         today = date.today()
         month_start = today.replace(day=1)
@@ -256,6 +258,7 @@ def run_fetch_pipeline(
             csrf_token=csrf_token,
         )
         chosen_rev = extract_revenue_absolute_from_facets_v2_rows(num_rows)
+        first_release_date_us = extract_first_release_date_us_from_facets_v2_rows(num_rows)
 
         if chosen_rev is None:
             raise RuntimeError("chosen revenueAbsolute not found for current month as-of")
@@ -322,6 +325,7 @@ def run_fetch_pipeline(
                 "market_revenue_absolute_usd": total_rev,
                 "share": share,
                 "share_percent": share * 100.0,
+                "category": category,
             }
     except RuntimeError as exc:
         warnings.append(f"market_share_failed:{exc}")
@@ -362,6 +366,7 @@ def run_fetch_pipeline(
         "selected": chosen,
         "unified_app_id": None,
         "apps": [],
+        "first_release_date_us": first_release_date_us,
         "revenue": {
             "currency": "USD",
             "monthly_estimates": monthly_estimates,

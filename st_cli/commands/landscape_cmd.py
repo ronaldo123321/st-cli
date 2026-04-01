@@ -1,4 +1,4 @@
-"""st landscape — build competitive landscape inputs from rdt-cli-research report."""
+"""st landscape — fetch competitive landscape data (and optionally render report)."""
 
 import html
 import logging
@@ -15,6 +15,7 @@ from st_cli.auth import get_credential
 from st_cli.constants import CREDENTIAL_FILE, DEFAULT_FACET_REGIONS
 from st_cli.output import error_payload, print_payload, success_payload
 from st_cli.pipeline import PipelineFailure, PipelineSuccess, run_fetch_pipeline
+from st_cli.reports.landscape import render_landscape_report_md
 from st_cli.st_client import create_st_client
 
 logger = logging.getLogger(__name__)
@@ -95,11 +96,18 @@ def _extract_month_value(monthly: list[dict[str, Any]], month_key: str) -> float
     return None
 
 
+def _growth_vs_prev_percent(cur: float | None, prev: float | None) -> float | None:
+    if cur is None or prev is None or prev <= 0:
+        return None
+    return (cur - prev) / prev * 100.0
+
+
 def _format_growth_ratio(cur: float | None, prev: float | None) -> str:
     if cur is None or prev is None or prev <= 0:
         return "N/A"
-    ratio = cur / prev
-    return f"{ratio:.2f}x"
+    pct = (cur - prev) / prev * 100.0
+    sign = "+" if pct >= 0 else ""
+    return f"{sign}{pct:.1f}%"
 
 
 def _parse_iso_date(v: Any) -> date | None:
@@ -527,294 +535,6 @@ def _current_month_as_of() -> tuple[date, date]:
     return month_start, month_end
 
 
-def _render_report_md(*, source: dict[str, Any], competitors: list[dict[str, Any]]) -> str:
-    month = _normalize_text(source.get("month"))
-    as_of = _normalize_text(source.get("as_of"))
-    regions = source.get("facet_regions", [])
-    regions_str = "global" if isinstance(regions, list) and len(regions) > 20 else ", ".join(str(r) for r in (regions or []))
-
-    ranked = []
-    for it in competitors:
-        st = it.get("st") if isinstance(it, dict) else None
-        rev = None
-        if isinstance(st, dict):
-            v = st.get("revenue_as_of_current_month_usd")
-            if isinstance(v, (int, float)):
-                rev = float(v)
-        ranked.append((rev, it))
-    ranked.sort(key=lambda x: (x[0] is None, -(x[0] or 0.0)))
-
-    market_proxy: float | None = None
-    for _, it in ranked:
-        st = it.get("st") if isinstance(it, dict) else None
-        if not isinstance(st, dict):
-            continue
-        ms = st.get("market_share_as_of_current_month")
-        if not isinstance(ms, dict):
-            continue
-        v = ms.get("market_revenue_absolute_usd")
-        if isinstance(v, (int, float)) and float(v) > 0:
-            market_proxy = float(v)
-            break
-
-    def _key_point(points: list[str]) -> str:
-        if not points:
-            return "N/A"
-        p = points[0]
-        # Strip prefixes like "Reddit:" / "App store (sample):"
-        for prefix in ("Reddit:", "App store (sample):"):
-            if p.startswith(prefix):
-                p = p[len(prefix) :].strip()
-        return _clip_sentence(p, 120)
-
-    def _ai_powered_label(ai_label: str) -> str:
-        if ai_label == "AI-enabled":
-            return "Yes"
-        if ai_label == "No AI features":
-            return "No"
-        return "Unclear"
-
-    def _positive_sentiments(comments: list[dict[str, Any]]) -> list[str]:
-        out: list[str] = []
-        for c in comments:
-            if not isinstance(c, dict):
-                continue
-            sent = str(c.get("sentiment", "")).lower()
-            if sent != "happy":
-                continue
-            body = _clean_snippet(_normalize_text(c.get("content")))
-            if body:
-                out.append(body)
-            if len(out) >= 3:
-                break
-        return out
-
-    def _negative_sentiments(comments: list[dict[str, Any]]) -> list[str]:
-        out: list[str] = []
-        for c in comments:
-            if not isinstance(c, dict):
-                continue
-            sent = str(c.get("sentiment", "")).lower()
-            if sent != "unhappy":
-                continue
-            body = _clean_snippet(_normalize_text(c.get("content")))
-            if body:
-                out.append(body)
-            if len(out) >= 3:
-                break
-        if out:
-            return out
-        # fallback
-        for c in comments:
-            if not isinstance(c, dict):
-                continue
-            body = _clean_snippet(_normalize_text(c.get("content")))
-            if body and _text_looks_negative(body):
-                out.append(body)
-            if len(out) >= 2:
-                break
-        return out
-
-    lines: list[str] = []
-    lines.append(f"# Competitive Landscape — {month} Mobile Revenue (Global, as-of {as_of})")
-    lines.append("")
-    lines.append("## Overview")
-    lines.append("")
-    lines.append("### Market size")
-    lines.append(f"- **Total market revenue (proxy)**: {_money_compact_usd(market_proxy)} (Top N proxy)")
-    lines.append(f"- **As-of window**: {month} (as-of {as_of})")
-    lines.append(f"- **Regions**: {regions_str}")
-    lines.append("")
-    lines.append("### Competitive Landscape")
-    lines.append("")
-    lines.append(
-        "| # | Product | B2B/B2C | AI-Powered | "
-        f"{month} Revenue | Past 6 Months Growth | Created | Share (as-of month) | Key Strength | Key Weakness |"
-    )
-    lines.append("|---:|---|---|---|---|---|---|---|---|")
-
-    computed: list[dict[str, Any]] = []
-    for idx, (rev, it) in enumerate(ranked, start=1):
-        name = _normalize_text(it.get("name"))
-        rdt = it.get("rdt") if isinstance(it.get("rdt"), dict) else {}
-        st = it.get("st") if isinstance(it.get("st"), dict) else {}
-        err = it.get("error")
-        selected = st.get("selected") if isinstance(st.get("selected"), dict) else None
-        comments = st.get("comments") if isinstance(st.get("comments"), list) else []
-        core_review = _normalize_text(rdt.get("core_review"))
-        ai_label = _classify_ai_label(name=name, core_review=core_review, comments=comments)
-        segment = _classify_segment(name=name, core_review=core_review, comments=comments, selected=selected)
-        strengths, weaknesses = _extract_strength_weakness_bullets(
-            core_review=core_review,
-            comments=comments,
-            rdt_positive=rdt.get("positive") if isinstance(rdt.get("positive"), int) else None,
-            rdt_negative=rdt.get("negative") if isinstance(rdt.get("negative"), int) else None,
-        )
-        caveat = _match_warning(name, selected)
-
-        share_percent = None
-        ms = st.get("market_share_as_of_current_month")
-        if isinstance(ms, dict):
-            sp = ms.get("share_percent")
-            if isinstance(sp, (int, float)):
-                share_percent = float(sp)
-
-        product_cell = name
-        if err:
-            product_cell = f"{name} (fetch failed)"
-
-        lines.append(
-            "| "
-            + " | ".join(
-                [
-                    str(idx),
-                    product_cell,
-                    segment,
-                    _ai_powered_label(ai_label),
-                    _money_compact_usd(rev),
-                    _format_growth_ratio(
-                        _extract_month_value(
-                            st.get("monthly_estimates", []) if isinstance(st, dict) else [],
-                            month,
-                        ),
-                        _extract_month_value(
-                            st.get("monthly_estimates", []) if isinstance(st, dict) else [],
-                            _shift_month_key(month, -6) or "",
-                        ),
-                    ),
-                    _format_date(_parse_iso_date((selected or {}).get("release_date"))),
-                    f"{share_percent:.2f}%" if share_percent is not None else "N/A",
-                    _key_point(strengths),
-                    _key_point(weaknesses),
-                ]
-            )
-            + " |"
-        )
-
-        computed.append(
-            {
-                "idx": idx,
-                "name": name,
-                "rev": rev,
-                "share_percent": share_percent,
-                "ai_label": ai_label,
-                "segment": segment,
-                "core_review": core_review,
-                "selected": selected,
-                "comments": comments,
-                "monthly_estimates": st.get("monthly_estimates", []) if isinstance(st, dict) else [],
-                "strengths": strengths,
-                "weaknesses": weaknesses,
-                "positive_sentiments": _positive_sentiments(comments),
-                "negative_sentiments": _negative_sentiments(comments),
-                "caveat": caveat,
-                "error": err,
-                "rdt_mentions": rdt.get("mentions"),
-                "rdt_positive": rdt.get("positive"),
-                "rdt_negative": rdt.get("negative"),
-            }
-        )
-
-    lines.append("")
-
-    # Detailed sections
-    for it in computed:
-        name = it["name"]
-        idx = it["idx"]
-        rev = it["rev"]
-        share_percent = it["share_percent"]
-        ai_label = it["ai_label"]
-        segment = it["segment"]
-        selected = it["selected"] or {}
-        core_review = it["core_review"]
-        caveat = it["caveat"]
-
-        lines.append(f"## {idx}. {name}")
-        if it["error"]:
-            lines.append("")
-            lines.append(f"Fetch failed: `{_normalize_text(it['error'])[:200]}`")
-            lines.append("")
-            continue
-
-        lines.append("")
-        lines.append(f"- **{month} Revenue (as-of)**: {_money_compact_usd(rev)}")
-        m6 = _shift_month_key(month, -6)
-        if m6:
-            cur_v = _extract_month_value(it.get("monthly_estimates", []), month)
-            prev_v = _extract_month_value(it.get("monthly_estimates", []), m6)
-            lines.append(f"- **Past 6 Months Growth**: {_format_growth_ratio(cur_v, prev_v)} (={month}/{m6})")
-        lines.append(f"- **Market share**: {f'{share_percent:.2f}%' if share_percent is not None else 'N/A'}")
-        created = _parse_iso_date(_normalize_text(selected.get("release_date")))
-        lines.append(f"- **Created**: {_format_date(created)}")
-        lines.append(f"- **Focus**: {segment}")
-        lines.append(f"- **AI**: {ai_label}")
-        pub = _normalize_text(selected.get("publisher_name"))
-        if pub:
-            lines.append(f"- **Publisher**: {pub}")
-        lines.append("")
-        lines.append("**What it does**")
-        lines.append("")
-        # Best-effort: use rdt core quote as short functional description.
-        what = _clean_snippet(core_review) or "N/A"
-        lines.append(f"{what}")
-
-        if caveat:
-            lines.append("")
-            lines.append(f"**Caveat**: {caveat}")
-
-        pos = it["positive_sentiments"]
-        neg = it["negative_sentiments"]
-        lines.append("")
-        lines.append("**Positive user sentiment**")
-        lines.append("")
-        if pos:
-            for b in pos:
-                lines.append(f"- {_clip_sentence(b, 200)}")
-        else:
-            lines.append("- (no strong positive signal in sampled reviews)")
-
-        lines.append("")
-        lines.append("**Negative user sentiment**")
-        lines.append("")
-        if neg:
-            for b in neg:
-                lines.append(f"- {_clip_sentence(b, 200)}")
-        else:
-            lines.append("- (no strong negative signal in sampled reviews)")
-
-        lines.append("")
-        lines.append("**Notes (evidence)**")
-        lines.append("")
-        lines.append(
-            f"- rdt mentions: {_normalize_text(it['rdt_mentions'])}, +{_normalize_text(it['rdt_positive'])}/-{_normalize_text(it['rdt_negative'])}"
-        )
-        title = _normalize_text(selected.get("humanized_name") or selected.get("name"))
-        if title:
-            lines.append(f"- SensorTower resolved app: {title}")
-        # Keep a tiny trend hint in notes: sparkline over last 6 available points.
-        monthly = it.get("monthly_estimates", [])
-        if isinstance(monthly, list) and monthly:
-            pts: list[float] = []
-            for row in monthly[:6]:
-                if not isinstance(row, dict):
-                    continue
-                val = row.get("revenue_absolute_usd")
-                if isinstance(val, (int, float)):
-                    pts.append(float(val))
-                    continue
-                if val is None:
-                    continue
-                try:
-                    pts.append(float(str(val)))
-                except ValueError:
-                    continue
-            if pts:
-                lines.append(f"- Trend (6m sparkline): {_sparkline(pts)}")
-        lines.append("")
-
-    return "\n".join(lines).rstrip() + "\n"
-
-
 @click.command("landscape")
 @click.option(
     "--rdt-report",
@@ -999,7 +719,21 @@ def landscape(
                     },
                     "st": {
                         "selected": payload.get("selected"),
+                        "first_release_date_us": payload.get("first_release_date_us"),
                         "revenue_as_of_current_month_usd": revenue_as_of_month,
+                        "revenue_6_months_ago_usd": (
+                            _extract_month_value(monthly, _shift_month_key(month_key, -6) or "")
+                            if isinstance(monthly, list)
+                            else None
+                        ),
+                        "growth_vs_6m_percent": (
+                            _growth_vs_prev_percent(
+                                revenue_as_of_month,
+                                _extract_month_value(monthly, _shift_month_key(month_key, -6) or ""),
+                            )
+                            if isinstance(monthly, list)
+                            else None
+                        ),
                         "market_share_as_of_current_month": payload.get("market_share_as_of_current_month"),
                         "comments": payload.get("comments", [])[:5],
                         "monthly_estimates": monthly if isinstance(monthly, list) else [],
@@ -1020,7 +754,7 @@ def landscape(
         "competitors": out_rows,
     }
     if out_path is not None:
-        report_md = _render_report_md(source=data["source"], competitors=out_rows)
+        report_md = render_landscape_report_md(source=data["source"], competitors=out_rows)
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(report_md, encoding="utf-8")
         data["report"] = {"path": str(out_path)}
