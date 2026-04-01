@@ -27,11 +27,20 @@ logger = logging.getLogger(__name__)
     default=None,
     help="When search returns multiple apps, pick 1-based index from candidates",
 )
+@click.option(
+    "--pick-strategy",
+    "pick_strategy",
+    type=click.Choice(["heuristic", "first", "fail"], case_sensitive=False),
+    default="heuristic",
+    show_default=True,
+    help="How to resolve multiple autocomplete matches when --pick is not set.",
+)
 @click.option("--json", "as_json", is_flag=True)
 @click.option("--yaml", "as_yaml", is_flag=True)
 def fetch(
     query: str,
     pick: int | None,
+    pick_strategy: str,
     as_json: bool,
     as_yaml: bool,
 ) -> None:
@@ -56,6 +65,7 @@ def fetch(
                 query,
                 pick_1based=pick,
                 auto_pick_first=False,
+                pick_strategy=pick_strategy,
             )
     except RuntimeError as exc:
         logger.exception("fetch failed")

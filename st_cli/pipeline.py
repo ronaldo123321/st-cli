@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import time
 from datetime import date, timedelta
 from dataclasses import dataclass
@@ -119,6 +120,89 @@ class PipelineSuccess:
     payload: dict[str, Any]
 
 
+def _tokenize_name(text: str) -> set[str]:
+    low = str(text or "").lower()
+    toks = {t for t in re.split(r"[^a-z0-9]+", low) if len(t) >= 3}
+    return toks
+
+
+def _candidate_title(candidate: dict[str, Any]) -> str:
+    return str(candidate.get("humanized_name") or candidate.get("name") or "").strip()
+
+
+def _candidate_publisher(candidate: dict[str, Any]) -> str:
+    return str(candidate.get("publisher_name") or "").strip()
+
+
+def _candidate_has_both_platforms(candidate: dict[str, Any]) -> bool:
+    ios_apps = candidate.get("ios_apps")
+    android_apps = candidate.get("android_apps")
+    return bool(isinstance(ios_apps, list) and ios_apps) and bool(
+        isinstance(android_apps, list) and android_apps
+    )
+
+
+def _score_candidate(raw_query: str, candidate: dict[str, Any]) -> float:
+    q = (raw_query or "").strip().lower()
+    title = _candidate_title(candidate).lower()
+    pub = _candidate_publisher(candidate).lower()
+
+    score = 0.0
+    if not q:
+        return score
+
+    if q == title:
+        score += 8.0
+    elif q and title and (q in title or title in q):
+        score += 5.0
+
+    q_toks = _tokenize_name(q)
+    t_toks = _tokenize_name(title)
+    if q_toks and t_toks:
+        overlap = len(q_toks & t_toks)
+        score += 3.0 * (overlap / max(1, len(q_toks)))
+
+    p_toks = _tokenize_name(pub)
+    if q_toks and p_toks and (q_toks & p_toks):
+        score += 0.8
+
+    if _candidate_has_both_platforms(candidate):
+        score += 0.5
+
+    if candidate.get("active") is False:
+        score -= 1.0
+
+    return score
+
+
+def _choose_candidate_heuristic(
+    *,
+    raw_query: str,
+    candidates: list[dict[str, Any]],
+    warnings: list[str],
+) -> int | None:
+    scored: list[tuple[float, int]] = []
+    for idx, c in enumerate(candidates):
+        if not isinstance(c, dict):
+            continue
+        scored.append((_score_candidate(raw_query, c), idx))
+    if not scored:
+        return None
+    scored.sort(key=lambda x: (-x[0], x[1]))
+    top_score, top_idx = scored[0]
+    second_score = scored[1][0] if len(scored) > 1 else None
+
+    # Guardrails: ensure match is confident.
+    if top_score < 2.2:
+        warnings.append("pick_strategy=heuristic:low_confidence")
+        return None
+    if second_score is not None and (top_score - second_score) < 0.8:
+        warnings.append("pick_strategy=heuristic:ambiguous_top2")
+        return None
+    warnings.append(f"pick_strategy=heuristic:score={top_score:.2f}")
+    return top_idx
+
+
 def collect_monthly_revenue(
     client: httpx.Client,
     app_ids: list[int | str],
@@ -168,6 +252,7 @@ def run_fetch_pipeline(
     pick_1based: int | None = None,
     auto_pick_first: bool = False,
     category: int = 0,
+    pick_strategy: str = "heuristic",
 ) -> PipelineSuccess | PipelineDisambiguation | PipelineFailure:
     """Resolve QUERY to ST app and pull monthly revenue (see ``MONTH_WINDOW_MONTHS``).
 
@@ -189,20 +274,34 @@ def run_fetch_pipeline(
             {"term": search_term},
         )
 
-    if len(candidates) > 1 and not auto_pick_first and pick_1based is None:
+    idx: int | None = None
+    if pick_1based is not None:
+        idx = pick_1based - 1
+    elif auto_pick_first:
+        idx = 0
+        warnings.append("pick_strategy=first:auto_pick_first")
+    else:
+        strategy = (pick_strategy or "heuristic").strip().lower()
+        if len(candidates) <= 1:
+            idx = 0
+        elif strategy == "first":
+            idx = 0
+            warnings.append("pick_strategy=first")
+        elif strategy == "heuristic":
+            idx = _choose_candidate_heuristic(raw_query=raw_query, candidates=candidates, warnings=warnings)
+        elif strategy == "fail":
+            idx = None
+            warnings.append("pick_strategy=fail")
+        else:
+            idx = _choose_candidate_heuristic(raw_query=raw_query, candidates=candidates, warnings=warnings)
+
+    if idx is None:
         return PipelineDisambiguation(
             candidates=candidates,
-            warnings=warnings + ["pass --pick N to choose"],
+            warnings=warnings + ["needs_disambiguation:true"],
             search_term=search_term,
             raw_query=raw_query,
         )
-
-    if auto_pick_first:
-        idx = 0
-    elif pick_1based is not None:
-        idx = pick_1based - 1
-    else:
-        idx = 0
 
     if idx < 0 or idx >= len(candidates):
         return PipelineFailure(

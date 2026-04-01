@@ -14,7 +14,7 @@ import click
 from st_cli.auth import get_credential
 from st_cli.constants import CREDENTIAL_FILE, DEFAULT_FACET_REGIONS
 from st_cli.output import error_payload, print_payload, success_payload
-from st_cli.pipeline import PipelineFailure, PipelineSuccess, run_fetch_pipeline
+from st_cli.pipeline import PipelineDisambiguation, PipelineFailure, PipelineSuccess, run_fetch_pipeline
 from st_cli.reports.landscape import render_landscape_report_md
 from st_cli.st_client import create_st_client
 
@@ -560,6 +560,14 @@ def _current_month_as_of() -> tuple[date, date]:
 )
 @click.option("--limit", "limit", type=int, default=12, show_default=True, help="Max competitors to include")
 @click.option("--category", "category", type=int, default=0, show_default=True, help="SensorTower category id for market share denominator (0=all apps)")
+@click.option(
+    "--pick-strategy",
+    "pick_strategy",
+    type=click.Choice(["heuristic", "first", "fail"], case_sensitive=False),
+    default="heuristic",
+    show_default=True,
+    help="How to resolve multiple autocomplete matches.",
+)
 @click.option("--out", "out_path", type=click.Path(dir_okay=False, path_type=Path), default=None, help="Write final report markdown to this path")
 @click.option("--json", "as_json", is_flag=True)
 @click.option("--yaml", "as_yaml", is_flag=True)
@@ -569,6 +577,7 @@ def landscape(
     names_file: Path | None,
     limit: int,
     category: int,
+    pick_strategy: str,
     out_path: Path | None,
     as_json: bool,
     as_yaml: bool,
@@ -653,7 +662,13 @@ def landscape(
     with create_st_client(cred.cookies) as client:
         for row in competitors[: max(1, limit)]:
             try:
-                res = run_fetch_pipeline(client, row.name, auto_pick_first=True, category=category)
+                res = run_fetch_pipeline(
+                    client,
+                    row.name,
+                    auto_pick_first=False,
+                    category=category,
+                    pick_strategy=pick_strategy,
+                )
             except RuntimeError as exc:
                 logger.exception("fetch failed for %s", row.name)
                 out_rows.append(
@@ -667,6 +682,31 @@ def landscape(
                         },
                         "st": None,
                         "error": str(exc),
+                    }
+                )
+                continue
+
+            if isinstance(res, PipelineDisambiguation):
+                out_rows.append(
+                    {
+                        "name": row.name,
+                        "rdt": {
+                            "mentions": row.mentions,
+                            "positive": row.positive,
+                            "negative": row.negative,
+                            "core_review": row.core_review,
+                        },
+                        "st": None,
+                        "error": {
+                            "code": "needs_disambiguation",
+                            "message": "Multiple autocomplete matches; refine name or disambiguate via st fetch --pick.",
+                            "details": {
+                                "candidates": res.candidates,
+                                "warnings": res.warnings,
+                                "search_term_used": res.search_term,
+                                "input": {"raw": res.raw_query},
+                            },
+                        },
                     }
                 )
                 continue
@@ -708,6 +748,23 @@ def landscape(
                                 revenue_as_of_month = None
                         break
 
+            selected = payload.get("selected") if isinstance(payload.get("selected"), dict) else None
+            comments = payload.get("comments", [])[:5]
+            if not isinstance(comments, list):
+                comments = []
+            core_review = _normalize_text(row.core_review)
+            ai_label = _classify_ai_label(name=row.name, core_review=core_review, comments=comments)
+            segment = _classify_segment(
+                name=row.name, core_review=core_review, comments=comments, selected=selected
+            )
+            strengths, weaknesses = _extract_strength_weakness_bullets(
+                core_review=core_review,
+                comments=comments,
+                rdt_positive=row.positive,
+                rdt_negative=row.negative,
+            )
+            caveat = _match_warning(row.name, selected)
+
             out_rows.append(
                 {
                     "name": row.name,
@@ -717,8 +774,13 @@ def landscape(
                         "negative": row.negative,
                         "core_review": row.core_review,
                     },
+                    "segment": segment,
+                    "ai_label": ai_label,
+                    "strengths": strengths,
+                    "weaknesses": weaknesses,
+                    "caveat": caveat,
                     "st": {
-                        "selected": payload.get("selected"),
+                        "selected": selected,
                         "first_release_date_us": payload.get("first_release_date_us"),
                         "revenue_as_of_current_month_usd": revenue_as_of_month,
                         "revenue_6_months_ago_usd": (
@@ -735,7 +797,7 @@ def landscape(
                             else None
                         ),
                         "market_share_as_of_current_month": payload.get("market_share_as_of_current_month"),
-                        "comments": payload.get("comments", [])[:5],
+                        "comments": comments,
                         "monthly_estimates": monthly if isinstance(monthly, list) else [],
                         "warnings": payload.get("warnings", []),
                     },

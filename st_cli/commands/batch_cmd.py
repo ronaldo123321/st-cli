@@ -7,7 +7,7 @@ import click
 from st_cli.auth import get_credential
 from st_cli.constants import CREDENTIAL_FILE
 from st_cli.output import error_payload, print_payload, success_payload
-from st_cli.pipeline import PipelineFailure, PipelineSuccess, run_fetch_pipeline
+from st_cli.pipeline import PipelineDisambiguation, PipelineFailure, PipelineSuccess, run_fetch_pipeline
 from st_cli.st_client import create_st_client
 
 logger = logging.getLogger(__name__)
@@ -15,10 +15,18 @@ logger = logging.getLogger(__name__)
 
 @click.command("batch")
 @click.option("-f", "--file", "file_path", type=click.Path(exists=True), required=True, help="One query per line")
+@click.option(
+    "--pick-strategy",
+    "pick_strategy",
+    type=click.Choice(["heuristic", "first", "fail"], case_sensitive=False),
+    default="heuristic",
+    show_default=True,
+    help="How to resolve multiple autocomplete matches.",
+)
 @click.option("--json", "as_json", is_flag=True)
 @click.option("--yaml", "as_yaml", is_flag=True)
-def batch(file_path: str, as_json: bool, as_yaml: bool) -> None:
-    """Run the same pipeline as ``st fetch`` for each line (always first autocomplete hit)."""
+def batch(file_path: str, pick_strategy: str, as_json: bool, as_yaml: bool) -> None:
+    """Run the same pipeline as ``st fetch`` for each line."""
     cred = get_credential()
     if not cred or not cred.cookies:
         print_payload(
@@ -50,7 +58,8 @@ def batch(file_path: str, as_json: bool, as_yaml: bool) -> None:
                     client,
                     line,
                     pick_1based=None,
-                    auto_pick_first=True,
+                    auto_pick_first=False,
+                    pick_strategy=pick_strategy,
                 )
                 if isinstance(result, PipelineFailure):
                     errors.append(
@@ -59,6 +68,21 @@ def batch(file_path: str, as_json: bool, as_yaml: bool) -> None:
                             "code": result.code,
                             "message": result.message,
                             "details": result.details,
+                        }
+                    )
+                    continue
+                if isinstance(result, PipelineDisambiguation):
+                    errors.append(
+                        {
+                            "query": line,
+                            "code": "needs_disambiguation",
+                            "message": "Multiple autocomplete matches; use `st fetch --pick` to decide.",
+                            "details": {
+                                "candidates": result.candidates,
+                                "warnings": result.warnings,
+                                "search_term_used": result.search_term,
+                                "input": {"raw": result.raw_query},
+                            },
                         }
                     )
                     continue
