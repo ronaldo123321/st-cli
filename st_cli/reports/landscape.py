@@ -103,24 +103,11 @@ def render_landscape_report_md(*, source: dict[str, Any], competitors: list[dict
         st = it.get("st") if isinstance(it, dict) else None
         rev = None
         if isinstance(st, dict):
-            v = st.get("revenue_as_of_current_month_usd")
+            v = st.get("revenue_last_month_usd")
             if isinstance(v, (int, float)):
                 rev = float(v)
         ranked.append((rev, it))
     ranked.sort(key=lambda x: (x[0] is None, -(x[0] or 0.0)))
-
-    market_proxy: float | None = None
-    for _, it in ranked:
-        st = it.get("st") if isinstance(it, dict) else None
-        if not isinstance(st, dict):
-            continue
-        ms = st.get("market_share_as_of_current_month")
-        if not isinstance(ms, dict):
-            continue
-        v = ms.get("market_revenue_absolute_usd")
-        if isinstance(v, (int, float)) and float(v) > 0:
-            market_proxy = float(v)
-            break
 
     def _key_point(points: list[str]) -> str:
         if not points:
@@ -136,8 +123,6 @@ def render_landscape_report_md(*, source: dict[str, Any], competitors: list[dict
     lines.append("")
     lines.append("## Overview")
     lines.append("")
-    lines.append("### Market size")
-    lines.append(f"- **Total market revenue (proxy)**: {_money_compact_usd(market_proxy)} (Top N proxy)")
     lines.append(f"- **As-of window**: {month} (as-of {as_of})")
     lines.append(f"- **Regions**: {regions_str}")
     lines.append("")
@@ -145,9 +130,9 @@ def render_landscape_report_md(*, source: dict[str, Any], competitors: list[dict
     lines.append("")
     lines.append(
         "| # | Product | B2B/B2C | AI-Powered | "
-        f"{month} Revenue | 6M Growth | First Release | Share (as-of month) | Key Strength | Key Weakness |"
+        f"{month} Revenue | 6M Growth | First Release | Key Strength | Key Weakness |"
     )
-    lines.append("|---:|---|---|---|---|---|---|---|---|")
+    lines.append("|---:|---|---|---|---|---|---|---|")
 
     computed: list[dict[str, Any]] = []
     for idx, (rev, it) in enumerate(ranked, start=1):
@@ -156,13 +141,6 @@ def render_landscape_report_md(*, source: dict[str, Any], competitors: list[dict
         err = it.get("error")
         selected = st.get("selected") if isinstance(st.get("selected"), dict) else None
         comments = st.get("comments") if isinstance(st.get("comments"), list) else []
-
-        share_percent = None
-        ms = st.get("market_share_as_of_current_month")
-        if isinstance(ms, dict):
-            sp = ms.get("share_percent")
-            if isinstance(sp, (int, float)):
-                share_percent = float(sp)
 
         product_cell = name
         if err:
@@ -179,7 +157,6 @@ def render_landscape_report_md(*, source: dict[str, Any], competitors: list[dict
                     _money_compact_usd(rev),
                     _normalize_text(it.get("growth_6m_label")),
                     _format_date(_parse_iso_date(_normalize_text(st.get("first_release_date_us")))),
-                    f"{share_percent:.2f}%" if share_percent is not None else "N/A",
                     _key_point(it.get("strengths") if isinstance(it.get("strengths"), list) else []),
                     _key_point(it.get("weaknesses") if isinstance(it.get("weaknesses"), list) else []),
                 ]
@@ -192,7 +169,6 @@ def render_landscape_report_md(*, source: dict[str, Any], competitors: list[dict
                 "idx": idx,
                 "name": name,
                 "rev": rev,
-                "share_percent": share_percent,
                 "selected": selected,
                 "comments": comments,
                 "monthly_estimates": st.get("monthly_estimates", []) if isinstance(st, dict) else [],
@@ -214,7 +190,6 @@ def render_landscape_report_md(*, source: dict[str, Any], competitors: list[dict
         name = it["name"]
         idx = it["idx"]
         rev = it["rev"]
-        share_percent = it["share_percent"]
         ai_label = it["ai_label"]
         segment = it["segment"]
         selected = it["selected"] or {}
@@ -231,7 +206,6 @@ def render_landscape_report_md(*, source: dict[str, Any], competitors: list[dict
         lines.append("")
         lines.append(f"- **{month} Revenue (as-of)**: {_money_compact_usd(rev)}")
         lines.append(f"- **6M Growth**: {_normalize_text(it.get('growth_6m_label'))}")
-        lines.append(f"- **Market share**: {f'{share_percent:.2f}%' if share_percent is not None else 'N/A'}")
         lines.append(f"- **First release**: {_format_date(_parse_iso_date(_normalize_text(st.get('first_release_date_us'))))}")
         lines.append(f"- **Focus**: {segment}")
         lines.append(f"- **AI**: {ai_label}")

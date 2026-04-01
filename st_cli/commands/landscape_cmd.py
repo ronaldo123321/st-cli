@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 @dataclass(frozen=True)
 class CompetitorRow:
     name: str
+    store_url: str | None
     mentions: int | None
     positive: int | None
     negative: int | None
@@ -535,6 +536,51 @@ def _current_month_as_of() -> tuple[date, date]:
     return month_start, month_end
 
 
+def _previous_month_key() -> str:
+    """Use previous calendar month as the reporting month key (YYYY-MM)."""
+    today = date.today()
+    this_month_start = today.replace(day=1)
+    prev_month_end = this_month_start - timedelta(days=1)
+    return prev_month_end.strftime("%Y-%m")
+
+
+_URL_RE = re.compile(r"https?://\\S+", re.IGNORECASE)
+
+
+def _parse_competitor_line(line: str) -> tuple[str, str] | None:
+    """Parse a competitors file line into (name, store_url).
+
+    Supported formats:
+    - name<TAB>url
+    - name, url
+    - name | url
+    """
+    s = _normalize_text(line)
+    if not s or s.startswith("#"):
+        return None
+    if "\t" in s:
+        left, right = s.split("\t", 1)
+        name = _normalize_text(left)
+        url = _normalize_text(right)
+        return (name, url) if name and url else None
+    if " | " in s:
+        left, right = s.split(" | ", 1)
+        name = _normalize_text(left)
+        url = _normalize_text(right)
+        return (name, url) if name and url else None
+    if "," in s:
+        left, right = s.split(",", 1)
+        name = _normalize_text(left)
+        url = _normalize_text(right)
+        return (name, url) if name and url else None
+    m = _URL_RE.search(s)
+    if not m:
+        return None
+    url = _normalize_text(m.group(0))
+    name = _normalize_text(s.replace(m.group(0), ""))
+    return (name, url) if name and url else None
+
+
 @click.command("landscape")
 @click.option(
     "--rdt-report",
@@ -545,21 +591,14 @@ def _current_month_as_of() -> tuple[date, date]:
     help="Path to rdt-cli-research markdown report (optional).",
 )
 @click.option(
-    "--name",
-    "names",
-    multiple=True,
-    help="Competitor name. Repeatable, e.g. --name \"Expensify\" --name \"QuickBooks\"",
-)
-@click.option(
-    "--names-file",
-    "names_file",
+    "--competitors-file",
+    "competitors_file",
     type=click.Path(exists=True, dir_okay=False, path_type=Path),
     required=False,
     default=None,
-    help="Text file with one competitor name per line (optional).",
+    help="Competitors file. Each line: name<TAB>store_url (or name, url).",
 )
 @click.option("--limit", "limit", type=int, default=12, show_default=True, help="Max competitors to include")
-@click.option("--category", "category", type=int, default=0, show_default=True, help="SensorTower category id for market share denominator (0=all apps)")
 @click.option(
     "--pick-strategy",
     "pick_strategy",
@@ -573,10 +612,8 @@ def _current_month_as_of() -> tuple[date, date]:
 @click.option("--yaml", "as_yaml", is_flag=True)
 def landscape(
     rdt_report: Path | None,
-    names: tuple[str, ...],
-    names_file: Path | None,
     limit: int,
-    category: int,
+    competitors_file: Path | None,
     pick_strategy: str,
     out_path: Path | None,
     as_json: bool,
@@ -620,53 +657,71 @@ def landscape(
             raise SystemExit(1)
 
     if not competitors:
-        seen: set[str] = set()
-        all_names: list[str] = []
-        for n in names:
-            s = _normalize_text(n)
-            if not s or s in seen:
-                continue
-            seen.add(s)
-            all_names.append(s)
-        if names_file is not None:
-            for line in names_file.read_text(encoding="utf-8", errors="ignore").splitlines():
-                s = _normalize_text(line)
-                if not s or s.startswith("#") or s in seen:
-                    continue
-                seen.add(s)
-                all_names.append(s)
-            source_input["names_file"] = str(names_file)
-
-        if not all_names:
+        if competitors_file is None:
             print_payload(
                 error_payload(
                     "bad_request",
-                    "Provide either --rdt-report or at least one --name/--names-file.",
+                    "Provide either --rdt-report or --competitors-file (name + store URL).",
                     None,
                 ),
                 as_json=as_json,
                 as_yaml=as_yaml,
             )
             raise SystemExit(1)
-
-        source_input["names"] = all_names
+        parsed: list[tuple[str, str]] = []
+        for line in competitors_file.read_text(encoding="utf-8", errors="ignore").splitlines():
+            row = _parse_competitor_line(line)
+            if row is None:
+                continue
+            parsed.append(row)
+        if not parsed:
+            print_payload(
+                error_payload(
+                    "bad_request",
+                    "Could not parse any competitors from --competitors-file. Expected: name<TAB>store_url per line.",
+                    {"competitors_file": str(competitors_file)},
+                ),
+                as_json=as_json,
+                as_yaml=as_yaml,
+            )
+            raise SystemExit(1)
+        source_input["competitors_file"] = str(competitors_file)
         competitors = [
-            CompetitorRow(name=n, mentions=None, positive=None, negative=None, core_review="")
-            for n in all_names
+            CompetitorRow(name=name, store_url=url, mentions=None, positive=None, negative=None, core_review="")
+            for name, url in parsed
         ]
 
-    month_start, month_end = _current_month_as_of()
-    month_key = month_start.strftime("%Y-%m")
+    # Reporting month uses previous calendar month.
+    month_key = _previous_month_key()
+    _, month_end = _current_month_as_of()
 
     out_rows: list[dict[str, Any]] = []
     with create_st_client(cred.cookies) as client:
         for row in competitors[: max(1, limit)]:
+            if row.store_url is None:
+                out_rows.append(
+                    {
+                        "name": row.name,
+                        "store_url": None,
+                        "rdt": {
+                            "mentions": row.mentions,
+                            "positive": row.positive,
+                            "negative": row.negative,
+                            "core_review": row.core_review,
+                        },
+                        "st": None,
+                        "error": {
+                            "code": "missing_store_url",
+                            "message": "Competitor missing store URL. Provide name + store URL in --competitors-file.",
+                        },
+                    }
+                )
+                continue
             try:
                 res = run_fetch_pipeline(
                     client,
-                    row.name,
+                    row.store_url,
                     auto_pick_first=False,
-                    category=category,
                     pick_strategy=pick_strategy,
                 )
             except RuntimeError as exc:
@@ -674,6 +729,7 @@ def landscape(
                 out_rows.append(
                     {
                         "name": row.name,
+                        "store_url": row.store_url,
                         "rdt": {
                             "mentions": row.mentions,
                             "positive": row.positive,
@@ -690,6 +746,7 @@ def landscape(
                 out_rows.append(
                     {
                         "name": row.name,
+                        "store_url": row.store_url,
                         "rdt": {
                             "mentions": row.mentions,
                             "positive": row.positive,
@@ -715,6 +772,7 @@ def landscape(
                 out_rows.append(
                     {
                         "name": row.name,
+                        "store_url": row.store_url,
                         "rdt": {
                             "mentions": row.mentions,
                             "positive": row.positive,
@@ -730,7 +788,7 @@ def landscape(
             assert isinstance(res, PipelineSuccess)
             payload = res.payload
             monthly = (payload.get("revenue", {}) or {}).get("monthly_estimates", [])
-            revenue_as_of_month: float | None = None
+            revenue_last_month: float | None = None
             if isinstance(monthly, list):
                 for it in monthly:
                     if not isinstance(it, dict):
@@ -738,14 +796,14 @@ def landscape(
                     if it.get("month") == month_key:
                         val = it.get("revenue_absolute_usd")
                         if isinstance(val, (int, float)):
-                            revenue_as_of_month = float(val)
+                            revenue_last_month = float(val)
                         elif val is None:
-                            revenue_as_of_month = None
+                            revenue_last_month = None
                         else:
                             try:
-                                revenue_as_of_month = float(str(val))
+                                revenue_last_month = float(str(val))
                             except ValueError:
-                                revenue_as_of_month = None
+                                revenue_last_month = None
                         break
 
             selected = payload.get("selected") if isinstance(payload.get("selected"), dict) else None
@@ -768,6 +826,7 @@ def landscape(
             out_rows.append(
                 {
                     "name": row.name,
+                    "store_url": row.store_url,
                     "rdt": {
                         "mentions": row.mentions,
                         "positive": row.positive,
@@ -782,7 +841,7 @@ def landscape(
                     "st": {
                         "selected": selected,
                         "first_release_date_us": payload.get("first_release_date_us"),
-                        "revenue_as_of_current_month_usd": revenue_as_of_month,
+                        "revenue_last_month_usd": revenue_last_month,
                         "revenue_6_months_ago_usd": (
                             _extract_month_value(monthly, _shift_month_key(month_key, -6) or "")
                             if isinstance(monthly, list)
@@ -790,13 +849,12 @@ def landscape(
                         ),
                         "growth_vs_6m_percent": (
                             _growth_vs_prev_percent(
-                                revenue_as_of_month,
+                                revenue_last_month,
                                 _extract_month_value(monthly, _shift_month_key(month_key, -6) or ""),
                             )
                             if isinstance(monthly, list)
                             else None
                         ),
-                        "market_share_as_of_current_month": payload.get("market_share_as_of_current_month"),
                         "comments": comments,
                         "monthly_estimates": monthly if isinstance(monthly, list) else [],
                         "warnings": payload.get("warnings", []),
@@ -811,7 +869,6 @@ def landscape(
             "month": month_key,
             "as_of": month_end.isoformat(),
             "facet_regions": DEFAULT_FACET_REGIONS,
-            "category": category,
         },
         "competitors": out_rows,
     }

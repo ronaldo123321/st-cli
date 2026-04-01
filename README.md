@@ -87,35 +87,32 @@ st fetch "Duolingo" --pick 1 --json
 
 ## 竞品格局（`st landscape`）
 
-准备一个竞品名单文件（每行一个名称）：
+准备一个竞品名单文件（每行：竞品名 + store URL，推荐 `TAB` 分隔）：
 
 ```text
-QuickBooks
-Xero
-Zoho Books
-Wave
-FreshBooks
-Sage
+QuickBooks	https://apps.apple.com/us/app/quickbooks-accounting/id584606479
+Xero	https://apps.apple.com/us/app/xero-accounting/id422067011
+Zoho Books	https://apps.apple.com/us/app/zoho-books-accounting/id1040049265
+Wave	https://apps.apple.com/us/app/wave-accounting/id449637421
+FreshBooks	https://apps.apple.com/us/app/freshbooks-invoice-tracking/id479925545
+Sage	https://apps.apple.com/us/app/sage/id1470884689
 ```
 
 然后运行（示例）：
 
 ```bash
-ST_FACET_REGIONS=global st landscape \
-  --names-file competitors_batch1.txt \
-  --category 0 \
+st landscape \
+  --competitors-file competitors_batch1.txt \
   --limit 6 \
   --json \
   --out report.md
 ```
 
 - 输出的核心列（报告与 JSON 都会包含）：
-  - **`{YYYY-MM} Revenue`**：最近一个月收入（USD，as-of 口径）
-  - **`6M Growth`**：相比 6 个月前的增长率（百分比）
+  - **`{YYYY-MM} Revenue`**：**上一个自然月**的收入（USD）
+  - **`6M Growth`**：相对 **上一个自然月的 6 个月前** 的增长率（百分比）
   - **`First Release`**：首次发布时间（US）
 
-- **`ST_FACET_REGIONS=global`**：用于市场份额/Top apps 的分母口径（内部会展开成一组区域列表）
-- **`--category`**：用于市场份额分母（SensorTower category id）。不确定时可先用 `0`，但这会让 “share” 变成“全市场 proxy”，解释时要小心
 - **`--limit`**：最多输出 N 个竞品（会对输入名单做解析/匹配，个别名称可能解析失败）
 - **`--out`**：生成 Markdown 报告路径
 
@@ -124,7 +121,7 @@ ST_FACET_REGIONS=global st landscape \
 先抓数据（产物可复用）：
 
 ```bash
-st landscape --names-file competitors_batch1.txt --json > landscape.json
+st landscape --competitors-file competitors_batch1.txt --json > landscape.json
 ```
 
 再单独渲染报告（不再请求 Sensor Tower）：
@@ -136,14 +133,14 @@ st landscape-report --in landscape.json --out report.md --json
 也支持 stdin 管道：
 
 ```bash
-st landscape --names-file competitors_batch1.txt --json | st landscape-report --out report.md --json
+st landscape --competitors-file competitors_batch1.txt --json | st landscape-report --out report.md --json
 ```
 
 ### `st landscape` JSON 字段补充说明
 
 `st landscape --json` 的 `data.competitors[].st` 中新增/常用字段：
 
-- **`revenue_as_of_current_month_usd`**：最近一个月收入（USD）
+- **`revenue_last_month_usd`**：上一个自然月收入（USD）
 - **`revenue_6_months_ago_usd`**：6 个月前对应月份的收入（USD）
 - **`growth_vs_6m_percent`**：相对 6 个月前的增长率（百分比数值；无法计算时为 `null`）
 - **`first_release_date_us`**：首次发布时间（来自 facets/v2）

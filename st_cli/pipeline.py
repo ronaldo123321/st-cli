@@ -10,23 +10,18 @@ from typing import Any
 
 import httpx
 
-from st_cli.constants import DEFAULT_FACET_REGIONS
 from st_cli.st_api import (
     autocomplete_search,
     extract_store_hints,
     extract_first_release_date_us_from_facets_v2_rows,
     extract_revenue_absolute_from_facets_v2_rows,
-    extract_total_revenue_absolute_from_facets_v2_rows,
     get_csrf_token_for_top_apps_page,
     apps_facets_v2_month_slice,
     get_app_comments,
     month_ranges_last_n_months,
-    top_unified_app_ids,
-    internal_entities,
 )
 
 MONTH_WINDOW_MONTHS = 12
-MARKET_SHARE_TOP_APPS_LIMIT = 100
 COMMENTS_LOOKBACK_DAYS = 120
 COMMENTS_LIMIT = 20
 
@@ -251,7 +246,6 @@ def run_fetch_pipeline(
     *,
     pick_1based: int | None = None,
     auto_pick_first: bool = False,
-    category: int = 0,
     pick_strategy: str = "heuristic",
 ) -> PipelineSuccess | PipelineDisambiguation | PipelineFailure:
     """Resolve QUERY to ST app and pull monthly revenue (see ``MONTH_WINDOW_MONTHS``).
@@ -327,26 +321,16 @@ def run_fetch_pipeline(
         csrf_token=csrf_token,
     )
 
-    # Market share (as-of current month):
-    # 1) numerator: selected app's revenueAbsolute (v2 facets) for current month as-of date
-    # 2) denominator: sum of revenueAbsolute over sub_app_ids expanded from top unified apps
-    #    using the same current-month as-of window.
-    market_share_as_of_current_month: dict[str, Any] | None = None
     first_release_date_us: str | None = None
     try:
         today = date.today()
         month_start = today.replace(day=1)
-        # SensorTower UI often uses "latest available date" rather than the full calendar month.
-        # Keep it aligned with the rest of this CLI logic by using a small delay.
         month_end = today - timedelta(days=2)
         if month_end < month_start:
             month_end = month_start
-
-        month_key = month_start.strftime("%Y-%m")
         comparison_start = _shift_month(month_start, -1)
         comparison_end = _shift_month(month_end, -1)
 
-        # Numerator: facets revenueAbsolute for the selected app(s).
         num_rows = apps_facets_v2_month_slice(
             client,
             facet_ids,
@@ -356,78 +340,9 @@ def run_fetch_pipeline(
             comparison_end,
             csrf_token=csrf_token,
         )
-        chosen_rev = extract_revenue_absolute_from_facets_v2_rows(num_rows)
         first_release_date_us = extract_first_release_date_us_from_facets_v2_rows(num_rows)
-
-        if chosen_rev is None:
-            raise RuntimeError("chosen revenueAbsolute not found for current month as-of")
-
-        top_ids = top_unified_app_ids(
-            client,
-            measure="revenue",
-            start_date=month_start,
-            end_date=month_end,
-            comparison_attribute="absolute",
-            category=category,
-            regions=DEFAULT_FACET_REGIONS,
-            limit=MARKET_SHARE_TOP_APPS_LIMIT,
-            offset=0,
-            csrf_token=csrf_token,
-        )
-
-        # Follow innovation-crawler flow:
-        # top_apps(unified ids) -> internal_entities(sub apps) -> facets(sub apps)
-        apps_for_top = internal_entities(client, top_ids, csrf_token=csrf_token)
-        sub_app_ids: list[int | str] = []
-        seen_sub: set[str] = set()
-        for a in apps_for_top:
-            for ios_app in a.get("ios_apps", []) or []:
-                v = ios_app.get("app_id")
-                if v is None:
-                    continue
-                key = f"ios:{v}"
-                if key in seen_sub:
-                    continue
-                seen_sub.add(key)
-                sub_app_ids.append(v)
-            for android_app in a.get("android_apps", []) or []:
-                v = android_app.get("app_id")
-                if v is None:
-                    continue
-                key = f"and:{v}"
-                if key in seen_sub:
-                    continue
-                seen_sub.add(key)
-                sub_app_ids.append(v)
-
-        rows = apps_facets_v2_month_slice(
-            client,
-            sub_app_ids,
-            month_start,
-            month_end,
-            comparison_start,
-            comparison_end,
-            csrf_token=csrf_token,
-        )
-        total_rev = extract_total_revenue_absolute_from_facets_v2_rows(rows)
-        if total_rev and total_rev > 0:
-            share = float(chosen_rev) / float(total_rev)
-            market_share_as_of_current_month = {
-                "month": month_key,
-                "as_of": month_end.isoformat(),
-                "proxy": {
-                    "denominator_app_ids_count": len(sub_app_ids),
-                    "denominator_app_ids_preview": sub_app_ids[:20],
-                    "note": "denominator = facets revenueAbsolute sum over sub_app_ids from top unified apps (regions=DEFAULT_FACET_REGIONS)",
-                },
-                "revenue_absolute_usd": chosen_rev,
-                "market_revenue_absolute_usd": total_rev,
-                "share": share,
-                "share_percent": share * 100.0,
-                "category": category,
-            }
     except RuntimeError as exc:
-        warnings.append(f"market_share_failed:{exc}")
+        warnings.append(f"first_release_failed:{exc}")
 
     # Comments: fetch last 120 days, first N items.
     comments: list[dict[str, Any]] = []
@@ -471,10 +386,6 @@ def run_fetch_pipeline(
             "monthly_estimates": monthly_estimates,
             "window_months": MONTH_WINDOW_MONTHS,
         },
-        # Backward-compat: historically this key was named "...last_month" but now it represents
-        # "as-of current month" to match SensorTower UI.
-        "market_share_last_month": market_share_as_of_current_month,
-        "market_share_as_of_current_month": market_share_as_of_current_month,
         "comments": comments,
         "warnings": warnings,
     }

@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 # PyPI project name (must be unique). CLI command remains `st` via [project.scripts].
 name = "sensortower-st-cli"
-version = "0.1.6"
+version = "0.1.7"
 description = "Sensor Tower CLI — browser cookies + httpx, JSON envelope for agents"
 readme = "README.md"
 requires-python = ">=3.10"

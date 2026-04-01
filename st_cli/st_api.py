@@ -316,6 +316,7 @@ def apps_facets_v2_month_slice(
     comparison_end: date,
     *,
     csrf_token: str | None = None,
+    limit: int | None = None,
 ) -> list[dict[str, Any]]:
     """Call Sensor Tower v2 facets API (mirrors innovation-crawler `get_app_facets_v2`)."""
     coerced_ids = [_coerce_actual_type_value(v) for v in app_ids]
@@ -355,11 +356,14 @@ def apps_facets_v2_month_slice(
             "comparison_end_date": comparison_end.strftime("%Y-%m-%d"),
             "devices": ["iphone", "ipad", "android"],
             "regions": DEFAULT_FACET_REGIONS,
-            "app_ids": coerced_ids,
         },
         "breakdowns": [["unifiedAppId", "appId"], ["unifiedAppId"]],
         "data_model": DEFAULT_DATA_MODEL,
     }
+    if coerced_ids:
+        body["filters"]["app_ids"] = coerced_ids
+    if isinstance(limit, int) and limit > 0:
+        body["limit"] = limit
     headers: dict[str, str] = dict(POST_JSON_HEADERS)
     if csrf_token:
         headers["x-csrf-token"] = csrf_token
