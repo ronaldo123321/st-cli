@@ -1,4 +1,11 @@
-"""st landscape-report — render markdown from `st landscape` JSON."""
+"""st landscape-report — render markdown from `st landscape` JSON.
+
+The rendered report includes per-competitor:
+- revenue (as-of month)
+- market share (as-of last month, 2-decimal percent)
+- downloads (as-of last month)
+- MAU (as-of last month)
+"""
 
 import json
 from pathlib import Path

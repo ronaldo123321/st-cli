@@ -10,20 +10,33 @@ from typing import Any
 
 import httpx
 
+from st_cli.constants import DEFAULT_FACET_REGIONS
 from st_cli.st_api import (
     autocomplete_search,
     extract_store_hints,
     extract_first_release_date_us_from_facets_v2_rows,
+    extract_downloads_absolute_from_facets_v2_rows,
+    extract_mau_absolute_from_facets_v2_rows,
     extract_revenue_absolute_from_facets_v2_rows,
+    extract_total_revenue_absolute_from_facets_v2_rows,
+    extract_total_revenue_absolute_any_from_facets_v2_rows,
     get_csrf_token_for_top_apps_page,
     apps_facets_v2_month_slice,
     get_app_comments,
+    internal_entities,
+    resolve_internal_entities_app_id,
     month_ranges_last_n_months,
+    top_sub_app_ids,
 )
 
 MONTH_WINDOW_MONTHS = 12
 COMMENTS_LOOKBACK_DAYS = 120
 COMMENTS_LIMIT = 20
+MARKET_SHARE_TOP_APPS_LIMIT_DEFAULT = 100
+
+_APP_CATEGORY_IDS_CACHE: dict[int, list[int]] = {}
+
+_MARKET_SHARE_TOTAL_CACHE: dict[tuple[str, int], float | None] = {}
 
 
 def _shift_month(d: date, months: int) -> date:
@@ -72,17 +85,116 @@ def _derive_facet_ids_from_candidate(candidate: dict[str, Any]) -> list[int | st
     return facet_ids
 
 
+def _unique_ints(values: list[int]) -> list[int]:
+    seen: set[int] = set()
+    out: list[int] = []
+    for v in values:
+        if v in seen:
+            continue
+        seen.add(v)
+        out.append(v)
+    return out
+
+
+def _parse_int_id(v: Any) -> int | None:
+    if v is None or isinstance(v, bool):
+        return None
+    if isinstance(v, int):
+        return v
+    if isinstance(v, float) and v.is_integer():
+        return int(v)
+    if isinstance(v, str):
+        s = v.strip()
+        if s.isdigit():
+            return int(s)
+    return None
+
+
+def _extract_category_ids_from_obj(obj: Any, *, _max_depth: int = 8) -> list[int]:
+    """Best-effort extraction of ST category id(s) from autocomplete/internal_entities payloads.
+
+    The exact key naming may vary across ST responses; we focus on keys that include "category" and "id",
+    plus common containers like "categories"/"category_ids".
+    """
+
+    found: list[int] = []
+
+    def walk(v: Any, depth: int) -> None:
+        if depth > _max_depth:
+            return
+        if isinstance(v, list):
+            for item in v:
+                if isinstance(item, (dict, list)):
+                    walk(item, depth + 1)
+            return
+        if not isinstance(v, dict):
+            return
+
+        for k, vv in v.items():
+            lk = str(k).lower()
+
+            if "category" in lk or lk in {"categories", "category_ids"}:
+                # Direct scalar id: category_id / categoryId / categoryID / .../_id
+                if ("id" in lk and not isinstance(vv, (dict, list))) or (lk.endswith("_id")):
+                    got = _parse_int_id(vv)
+                    if got is not None:
+                        found.append(got)
+                elif lk in {"categories", "category_ids"}:
+                    # Common list container: categories: [{"id": ...}, ...] or [123, ...]
+                    if isinstance(vv, list):
+                        for item in vv:
+                            if isinstance(item, dict):
+                                got = (
+                                    _parse_int_id(item.get("id"))
+                                    or _parse_int_id(item.get("category_id"))
+                                    or _parse_int_id(item.get("categoryId"))
+                                    or _parse_int_id(item.get("categoryID"))
+                                )
+                                if got is not None:
+                                    found.append(got)
+                            else:
+                                got = _parse_int_id(item)
+                                if got is not None:
+                                    found.append(got)
+                    else:
+                        got = _parse_int_id(vv)
+                        if got is not None:
+                            found.append(got)
+                elif lk == "category":
+                    if isinstance(vv, dict):
+                        got = (
+                            _parse_int_id(vv.get("id"))
+                            or _parse_int_id(vv.get("category_id"))
+                            or _parse_int_id(vv.get("categoryId"))
+                            or _parse_int_id(vv.get("categoryID"))
+                        )
+                        if got is not None:
+                            found.append(got)
+                    else:
+                        got = _parse_int_id(vv)
+                        if got is not None:
+                            found.append(got)
+
+            if isinstance(vv, (dict, list)):
+                walk(vv, depth + 1)
+
+    walk(obj, 0)
+    return _unique_ints(found)
+
+
 def prepare_search_term(raw_query: str) -> tuple[str, list[str]]:
     """Return search term for autocomplete and warning tags (store URL hints)."""
     warnings: list[str] = []
     search_term = raw_query.strip()
     hints = extract_store_hints(search_term)
-    if hints.get("ios_slug"):
-        search_term = hints["ios_slug"]
-        warnings.append("using_ios_slug_from_url")
-    elif hints.get("ios_numeric_id"):
+    # Prefer numeric id for iOS because slugs can be variant/redirect-specific and
+    # might not autocomplete reliably; numeric id is stable.
+    if hints.get("ios_numeric_id"):
         search_term = hints["ios_numeric_id"]
         warnings.append("using_ios_store_id_from_url")
+    elif hints.get("ios_slug"):
+        search_term = hints["ios_slug"]
+        warnings.append("using_ios_slug_from_url")
     elif hints.get("android_package"):
         search_term = hints["android_package"]
         warnings.append("using_android_package_from_url")
@@ -198,17 +310,19 @@ def _choose_candidate_heuristic(
     return top_idx
 
 
-def collect_monthly_revenue(
+def collect_monthly_metrics(
     client: httpx.Client,
     app_ids: list[int | str],
     warnings: list[str],
     *,
     csrf_token: str | None,
+    month_windows: list[tuple[date, date]],
 ) -> list[dict[str, Any]]:
-    """Fill monthly ``revenue_absolute_usd`` for ``MONTH_WINDOW_MONTHS`` calendar months."""
-    monthly_estimates: list[dict[str, Any]] = []
-    # Align with SensorTower "as-of" delay (data available up to ~2 days ago).
-    month_windows = month_ranges_last_n_months(MONTH_WINDOW_MONTHS, end=date.today() - timedelta(days=2))
+    """Fill monthly revenue/downloads/MAU for given calendar months (newest first)."""
+    monthly_revenue: list[dict[str, Any]] = []
+    monthly_downloads: list[dict[str, Any]] = []
+    monthly_mau: list[dict[str, Any]] = []
+
     for i, (m_start, m_end) in enumerate(month_windows):
         try:
             # v2 requires comparison range (previous month of current month).
@@ -224,20 +338,52 @@ def collect_monthly_revenue(
                 csrf_token=csrf_token,
             )
             rev = extract_revenue_absolute_from_facets_v2_rows(rows)
-            monthly_estimates.append(
+            downloads = extract_downloads_absolute_from_facets_v2_rows(rows)
+            mau = extract_mau_absolute_from_facets_v2_rows(rows)
+
+            monthly_revenue.append(
                 {
                     "month": m_start.strftime("%Y-%m"),
                     "revenue_absolute_usd": rev,
                 }
             )
+            monthly_downloads.append(
+                {
+                    "month": m_start.strftime("%Y-%m"),
+                    "downloads_absolute": downloads,
+                }
+            )
+            monthly_mau.append(
+                {
+                    "month": m_start.strftime("%Y-%m"),
+                    "mau_absolute": mau,
+                }
+            )
         except RuntimeError as exc:
             warnings.append(f"month_failed:{m_start}:{exc}")
-            monthly_estimates.append(
-                {"month": m_start.strftime("%Y-%m"), "revenue_absolute_usd": None}
-            )
+            month_key = m_start.strftime("%Y-%m")
+            monthly_revenue.append({"month": month_key, "revenue_absolute_usd": None})
+            monthly_downloads.append({"month": month_key, "downloads_absolute": None})
+            monthly_mau.append({"month": month_key, "mau_absolute": None})
+
         if i % 6 == 0:
             time.sleep(0.2)
-    return monthly_estimates
+
+    return [
+        {"type": "revenue", "monthly_estimates": monthly_revenue},
+        {"type": "downloads", "monthly_estimates": monthly_downloads},
+        {"type": "mau", "monthly_estimates": monthly_mau},
+    ]
+
+
+def _month_key_from_window(m_start: date) -> str:
+    return m_start.strftime("%Y-%m")
+
+
+def _get_previous_month_comparison_range(m_start: date) -> tuple[date, date]:
+    prev_end = m_start - timedelta(days=1)
+    prev_start = prev_end.replace(day=1)
+    return prev_start, prev_end
 
 
 def run_fetch_pipeline(
@@ -247,6 +393,10 @@ def run_fetch_pipeline(
     pick_1based: int | None = None,
     auto_pick_first: bool = False,
     pick_strategy: str = "heuristic",
+    include_market_share: bool = False,
+    market_share_category_override: int | None = None,
+    market_share_top_apps_limit: int = MARKET_SHARE_TOP_APPS_LIMIT_DEFAULT,
+    market_share_month_key: str | None = None,
 ) -> PipelineSuccess | PipelineDisambiguation | PipelineFailure:
     """Resolve QUERY to ST app and pull monthly revenue (see ``MONTH_WINDOW_MONTHS``).
 
@@ -314,12 +464,24 @@ def run_fetch_pipeline(
             chosen,
         )
     csrf_token = get_csrf_token_for_top_apps_page(client)
-    monthly_estimates = collect_monthly_revenue(
+
+    # Align with SensorTower "as-of" delay (data available up to ~2 days ago).
+    month_windows = month_ranges_last_n_months(
+        MONTH_WINDOW_MONTHS,
+        end=date.today() - timedelta(days=2),
+    )
+
+    metrics = collect_monthly_metrics(
         client,
         facet_ids,
         warnings,
         csrf_token=csrf_token,
+        month_windows=month_windows,
     )
+
+    monthly_revenue = next(it["monthly_estimates"] for it in metrics if it["type"] == "revenue")
+    monthly_downloads = next(it["monthly_estimates"] for it in metrics if it["type"] == "downloads")
+    monthly_mau = next(it["monthly_estimates"] for it in metrics if it["type"] == "mau")
 
     first_release_date_us: str | None = None
     try:
@@ -383,10 +545,105 @@ def run_fetch_pipeline(
         "first_release_date_us": first_release_date_us,
         "revenue": {
             "currency": "USD",
-            "monthly_estimates": monthly_estimates,
+            "monthly_estimates": monthly_revenue,
             "window_months": MONTH_WINDOW_MONTHS,
         },
+        "downloads": {"monthly_estimates": monthly_downloads, "window_months": MONTH_WINDOW_MONTHS},
+        "mau": {"monthly_estimates": monthly_mau, "window_months": MONTH_WINDOW_MONTHS},
         "comments": comments,
         "warnings": warnings,
     }
+
+    if include_market_share:
+        # Use the same month_key as the caller's reporting month (e.g. st landscape uses previous calendar month).
+        target_window = month_windows[0]
+        if market_share_month_key:
+            for win in month_windows:
+                if _month_key_from_window(win[0]) == market_share_month_key:
+                    target_window = win
+                    break
+
+        as_of_month_start, as_of_month_end = target_window
+        as_of_month_key = _month_key_from_window(as_of_month_start)
+
+        category_ids: list[int] = []
+        if market_share_category_override is not None:
+            category_ids = [market_share_category_override]
+        else:
+            category_ids = _extract_category_ids_from_obj(chosen)
+            if not category_ids:
+                resolved_app_id = resolve_internal_entities_app_id(chosen)
+                if isinstance(resolved_app_id, int):
+                    if resolved_app_id in _APP_CATEGORY_IDS_CACHE:
+                        category_ids = _APP_CATEGORY_IDS_CACHE[resolved_app_id]
+                    else:
+                        apps = internal_entities(client, [resolved_app_id], csrf_token=csrf_token)
+                        for app in apps:
+                            if not isinstance(app, dict):
+                                continue
+                            category_ids.extend(_extract_category_ids_from_obj(app))
+                        category_ids = _unique_ints(category_ids)
+                        _APP_CATEGORY_IDS_CACHE[resolved_app_id] = category_ids
+
+        if not category_ids:
+            category_ids = [0]
+            warnings.append("market_share_category_infer_failed")
+
+        market_share_category_id = category_ids[0]
+
+        numerator: float | None = None
+        if monthly_revenue:
+            for row in monthly_revenue:
+                if isinstance(row, dict) and row.get("month") == as_of_month_key:
+                    v = row.get("revenue_absolute_usd")
+                    numerator = v if isinstance(v, (int, float)) else None
+                    break
+
+        cache_key = (as_of_month_key, market_share_category_id)
+        if cache_key in _MARKET_SHARE_TOTAL_CACHE:
+            denom_total = _MARKET_SHARE_TOTAL_CACHE[cache_key]
+        else:
+            prev_start, prev_end = _get_previous_month_comparison_range(as_of_month_start)
+            # Denominator uses ST "top apps" as a proxy for the full market.
+            # We feed v2 facets with `sub_app_ids` (more compatible than ObjectId-like `unified_app_id`).
+            top_sub_ids = top_sub_app_ids(
+                client,
+                measure="revenue",
+                start_date=as_of_month_end,
+                end_date=as_of_month_end,
+                comparison_attribute="absolute",
+                category=market_share_category_id,
+                regions=DEFAULT_FACET_REGIONS,
+                limit=market_share_top_apps_limit,
+                csrf_token=csrf_token,
+            )
+            denom_rows = apps_facets_v2_month_slice(
+                client,
+                top_sub_ids,
+                as_of_month_start,
+                as_of_month_end,
+                prev_start,
+                prev_end,
+                csrf_token=csrf_token,
+            )
+            denom_total = extract_total_revenue_absolute_from_facets_v2_rows(denom_rows)
+            if denom_total is None:
+                # Some ST responses may omit unified (appId=None) aggregation rows.
+                # Fallback to summing revenueAbsolute across all returned rows.
+                denom_total = extract_total_revenue_absolute_any_from_facets_v2_rows(denom_rows)
+            _MARKET_SHARE_TOTAL_CACHE[cache_key] = denom_total
+
+        share_percent: float | None = None
+        if numerator is not None and denom_total is not None and denom_total > 0:
+            share_percent = float(numerator) / float(denom_total) * 100.0
+
+        payload["market_share_as_of_last_month"] = {
+            "share_percent": share_percent,
+            "month": as_of_month_key,
+            "market_revenue_total_proxy_usd": denom_total,
+            "top_apps_limit": market_share_top_apps_limit,
+            "category": market_share_category_id,
+            "category_candidates": category_ids,
+        }
+
     return PipelineSuccess(payload=payload)

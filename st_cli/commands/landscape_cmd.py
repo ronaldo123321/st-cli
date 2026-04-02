@@ -607,6 +607,16 @@ def _parse_competitor_line(line: str) -> tuple[str, str] | None:
     show_default=True,
     help="How to resolve multiple autocomplete matches.",
 )
+@click.option(
+    "--market-share-category-override",
+    "--category",
+    "market_share_category_override",
+    type=int,
+    required=False,
+    default=None,
+    show_default=False,
+    help="Optional: override inferred SensorTower category id for market share denominator.",
+)
 @click.option("--out", "out_path", type=click.Path(dir_okay=False, path_type=Path), default=None, help="Write final report markdown to this path")
 @click.option("--json", "as_json", is_flag=True)
 @click.option("--yaml", "as_yaml", is_flag=True)
@@ -615,6 +625,7 @@ def landscape(
     limit: int,
     competitors_file: Path | None,
     pick_strategy: str,
+    market_share_category_override: int | None,
     out_path: Path | None,
     as_json: bool,
     as_yaml: bool,
@@ -723,6 +734,9 @@ def landscape(
                     row.store_url,
                     auto_pick_first=False,
                     pick_strategy=pick_strategy,
+                    include_market_share=True,
+                    market_share_category_override=market_share_category_override,
+                    market_share_month_key=month_key,
                 )
             except RuntimeError as exc:
                 logger.exception("fetch failed for %s", row.name)
@@ -788,7 +802,11 @@ def landscape(
             assert isinstance(res, PipelineSuccess)
             payload = res.payload
             monthly = (payload.get("revenue", {}) or {}).get("monthly_estimates", [])
+            monthly_downloads = (payload.get("downloads", {}) or {}).get("monthly_estimates", [])
+            monthly_mau = (payload.get("mau", {}) or {}).get("monthly_estimates", [])
             revenue_last_month: float | None = None
+            downloads_last_month: float | None = None
+            mau_last_month: float | None = None
             if isinstance(monthly, list):
                 for it in monthly:
                     if not isinstance(it, dict):
@@ -805,6 +823,63 @@ def landscape(
                             except ValueError:
                                 revenue_last_month = None
                         break
+
+            if isinstance(monthly_downloads, list):
+                for it in monthly_downloads:
+                    if not isinstance(it, dict):
+                        continue
+                    if it.get("month") == month_key:
+                        val = it.get("downloads_absolute")
+                        if isinstance(val, (int, float)):
+                            downloads_last_month = float(val)
+                        elif val is None:
+                            downloads_last_month = None
+                        else:
+                            try:
+                                downloads_last_month = float(str(val))
+                            except ValueError:
+                                downloads_last_month = None
+                        break
+
+            if isinstance(monthly_mau, list):
+                for it in monthly_mau:
+                    if not isinstance(it, dict):
+                        continue
+                    if it.get("month") == month_key:
+                        val = it.get("mau_absolute")
+                        if isinstance(val, (int, float)):
+                            mau_last_month = float(val)
+                        elif val is None:
+                            mau_last_month = None
+                        else:
+                            try:
+                                mau_last_month = float(str(val))
+                            except ValueError:
+                                mau_last_month = None
+                        break
+
+            market_share_obj = payload.get("market_share_as_of_last_month")
+            share_percent: float | None = None
+            category_id: int | None = None
+            if isinstance(market_share_obj, dict):
+                v = market_share_obj.get("share_percent")
+                if isinstance(v, (int, float)):
+                    share_percent = float(v)
+                elif v is None:
+                    share_percent = None
+                else:
+                    try:
+                        share_percent = float(str(v))
+                    except ValueError:
+                        share_percent = None
+
+                v_cat = market_share_obj.get("category")
+                if isinstance(v_cat, int):
+                    category_id = v_cat
+                elif isinstance(v_cat, float) and v_cat.is_integer():
+                    category_id = int(v_cat)
+                elif isinstance(v_cat, str) and v_cat.strip().isdigit():
+                    category_id = int(v_cat.strip())
 
             selected = payload.get("selected") if isinstance(payload.get("selected"), dict) else None
             comments = payload.get("comments", [])[:5]
@@ -842,6 +917,10 @@ def landscape(
                         "selected": selected,
                         "first_release_date_us": payload.get("first_release_date_us"),
                         "revenue_last_month_usd": revenue_last_month,
+                        "revenue_as_of_last_month_usd": revenue_last_month,
+                        "market_share_as_of_last_month": {"share_percent": share_percent, "category": category_id},
+                        "downloads_as_of_last_month": {"downloads_absolute": downloads_last_month},
+                        "mau_as_of_last_month": {"mau_absolute": mau_last_month},
                         "revenue_6_months_ago_usd": (
                             _extract_month_value(monthly, _shift_month_key(month_key, -6) or "")
                             if isinstance(monthly, list)
@@ -869,6 +948,7 @@ def landscape(
             "month": month_key,
             "as_of": month_end.isoformat(),
             "facet_regions": DEFAULT_FACET_REGIONS,
+            "market_share_category_override": market_share_category_override,
         },
         "competitors": out_rows,
     }

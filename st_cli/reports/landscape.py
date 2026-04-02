@@ -27,6 +27,35 @@ def _money_compact_usd(v: float | None) -> str:
     return f"${n:.0f}"
 
 
+def _compact_count(v: float | int | None) -> str:
+    if v is None:
+        return "N/A"
+    try:
+        n = int(round(float(v)))
+    except (TypeError, ValueError):
+        return "N/A"
+    return f"{n:,}"
+
+
+def _format_share_percent(v: float | None) -> str:
+    """Format market share as a percentage with 2 decimals.
+
+    Backward-compat: some payloads may provide `share_percent` as a ratio (0~1).
+    In that case we convert it to percent for display.
+    """
+
+    if v is None:
+        return "N/A"
+    try:
+        n = float(v)
+    except (TypeError, ValueError):
+        return "N/A"
+
+    if n <= 1.0:
+        n *= 100.0
+    return f"{n:.2f}%"
+
+
 def _clip_sentence(text: str, max_len: int = 200) -> str:
     s = " ".join(text.split())
     if len(s) <= max_len:
@@ -205,6 +234,28 @@ def render_landscape_report_md(*, source: dict[str, Any], competitors: list[dict
 
         lines.append("")
         lines.append(f"- **{month} Revenue (as-of)**: {_money_compact_usd(rev)}")
+        share_obj = (st or {}).get("market_share_as_of_last_month")
+        share_percent: float | None = None
+        if isinstance(share_obj, dict):
+            v = share_obj.get("share_percent")
+            if isinstance(v, (int, float)):
+                share_percent = float(v)
+        downloads_obj = (st or {}).get("downloads_as_of_last_month")
+        downloads_absolute: float | None = None
+        if isinstance(downloads_obj, dict):
+            v = downloads_obj.get("downloads_absolute")
+            if isinstance(v, (int, float)):
+                downloads_absolute = float(v)
+        mau_obj = (st or {}).get("mau_as_of_last_month")
+        mau_absolute: float | None = None
+        if isinstance(mau_obj, dict):
+            v = mau_obj.get("mau_absolute")
+            if isinstance(v, (int, float)):
+                mau_absolute = float(v)
+
+        lines.append(f"- **Market share**: {_format_share_percent(share_percent)}")
+        lines.append(f"- **Downloads**: {_compact_count(downloads_absolute)}")
+        lines.append(f"- **MAU**: {_compact_count(mau_absolute)}")
         lines.append(f"- **6M Growth**: {_normalize_text(it.get('growth_6m_label'))}")
         lines.append(f"- **First release**: {_format_date(_parse_iso_date(_normalize_text(st.get('first_release_date_us'))))}")
         lines.append(f"- **Focus**: {segment}")

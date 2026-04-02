@@ -15,9 +15,7 @@
 
 ## 安装
 
-推荐给他人使用（全局安装，像 rdt-cli 一样直接 `st ...`）。
-
-PyPI 上的包名是 **`sensortower-st-cli`**（`st-cli` 与已有项目名过于相似，无法占用）；安装后命令行仍是 **`st`**。
+PyPI 上的包名是 **`sensortower-st-cli`**；安装后命令行仍是 **`st`**。
 
 ```bash
 uv tool install sensortower-st-cli
@@ -112,6 +110,9 @@ st landscape \
   - **`{YYYY-MM} Revenue`**：**上一个自然月**的收入（USD）
   - **`6M Growth`**：相对 **上一个自然月的 6 个月前** 的增长率（百分比）
   - **`First Release`**：首次发布时间（US）
+  - **`Market share`**：市场份额（上一个自然月口径），两位小数百分比
+  - **`Downloads`**：下载量（上一个自然月口径，absolute）
+  - **`MAU`**：月活人数（上一个自然月口径，absolute）
 
 - **`--limit`**：最多输出 N 个竞品（会对输入名单做解析/匹配，个别名称可能解析失败）
 - **`--out`**：生成 Markdown 报告路径
@@ -144,6 +145,9 @@ st landscape --competitors-file competitors_batch1.txt --json | st landscape-rep
 - **`revenue_6_months_ago_usd`**：6 个月前对应月份的收入（USD）
 - **`growth_vs_6m_percent`**：相对 6 个月前的增长率（百分比数值；无法计算时为 `null`）
 - **`first_release_date_us`**：首次发布时间（来自 facets/v2）
+- **`market_share_as_of_last_month.share_percent`**：市场份额（两位小数百分比）
+- **`downloads_as_of_last_month.downloads_absolute`**：下载量（absolute）
+- **`mau_as_of_last_month.mau_absolute`**：月活人数（absolute）
 
 ## 输出
 

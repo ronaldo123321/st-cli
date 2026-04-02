@@ -429,6 +429,67 @@ def top_unified_app_ids(
     return out
 
 
+def top_sub_app_ids(
+    client: httpx.Client,
+    *,
+    measure: str,
+    start_date: date,
+    end_date: date,
+    comparison_attribute: str,
+    category: int = 0,
+    regions: list[str],
+    limit: int,
+    offset: int = 0,
+    csrf_token: str | None = None,
+) -> list[int | str]:
+    """POST `/api/unified/top_apps` and return `sub_app_ids` for each top row.
+
+    `unified_app_id` is often an ObjectId-like string; v2 facets works better with
+    numeric sub app ids (and possibly package-name strings) from `sub_app_ids`.
+    """
+    params = {
+        "os": "unified",
+        "filters": {
+            "measure": measure,
+            "comparison_attribute": comparison_attribute,
+            "category": category,
+            "devices": ["iphone", "ipad", "android"],
+            "regions": regions,
+            "start_date": start_date.strftime("%Y-%m-%d"),
+            "end_date": end_date.strftime("%Y-%m-%d"),
+            "time_range": "day",
+        },
+        "pagination": {"limit": limit, "offset": offset},
+        "data_model": DEFAULT_DATA_MODEL,
+    }
+    headers: dict[str, str] = dict(POST_JSON_HEADERS)
+    if csrf_token:
+        headers["x-csrf-token"] = csrf_token
+    r = client.post("/api/unified/top_apps", json=params, headers=headers)
+    data = _parse_json_response(r)
+    items = (
+        data.get("data", {}).get("apps_ids", [])
+        if isinstance(data, dict)
+        else []
+    )
+    out: list[int | str] = []
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        sub_ids = it.get("sub_app_ids") or []
+        if not isinstance(sub_ids, list):
+            continue
+        for sid in sub_ids:
+            if sid is None:
+                continue
+            if isinstance(sid, int):
+                out.append(sid)
+                continue
+            if isinstance(sid, str) and sid.strip():
+                out.append(sid.strip())
+    return out
+
+
 def extract_revenue_absolute_from_facets_v2_rows(
     facet_rows: list[dict[str, Any]],
 ) -> float | None:
@@ -449,6 +510,50 @@ def extract_revenue_absolute_from_facets_v2_rows(
             return None
         try:
             return float(s) / 100.0
+        except ValueError:
+            return None
+    return None
+
+
+def extract_downloads_absolute_from_facets_v2_rows(
+    facet_rows: list[dict[str, Any]],
+) -> float | None:
+    """Extract `downloadsAbsolute` from the unified row (`appId is None`)."""
+    for row in facet_rows:
+        if row.get("appId") is not None:
+            continue
+        val = row.get("downloadsAbsolute")
+        if val is None or val == "":
+            return None
+        if isinstance(val, (int, float)):
+            return float(val)
+        s = str(val).strip()
+        if not s:
+            return None
+        try:
+            return float(s)
+        except ValueError:
+            return None
+    return None
+
+
+def extract_mau_absolute_from_facets_v2_rows(
+    facet_rows: list[dict[str, Any]],
+) -> float | None:
+    """Extract `activeUsersMAUAbsolute` from the unified row (`appId is None`)."""
+    for row in facet_rows:
+        if row.get("appId") is not None:
+            continue
+        val = row.get("activeUsersMAUAbsolute")
+        if val is None or val == "":
+            return None
+        if isinstance(val, (int, float)):
+            return float(val)
+        s = str(val).strip()
+        if not s:
+            return None
+        try:
+            return float(s)
         except ValueError:
             return None
     return None
@@ -483,6 +588,35 @@ def extract_total_revenue_absolute_from_facets_v2_rows(
     for row in facet_rows:
         if row.get("appId") is not None:
             continue
+        val = row.get("revenueAbsolute")
+        if val is None or val == "":
+            continue
+        seen_any = True
+        if isinstance(val, (int, float)):
+            total += float(val) / 100.0
+            continue
+        s = str(val).strip()
+        if not s:
+            continue
+        try:
+            total += float(s) / 100.0
+        except ValueError:
+            continue
+    if not seen_any:
+        return None
+    return total
+
+
+def extract_total_revenue_absolute_any_from_facets_v2_rows(
+    facet_rows: list[dict[str, Any]],
+) -> float | None:
+    """Sum `revenueAbsolute` (USD) across all rows.
+
+    Fallback when unified (appId=None) aggregation rows are missing.
+    """
+    total = 0.0
+    seen_any = False
+    for row in facet_rows:
         val = row.get("revenueAbsolute")
         if val is None or val == "":
             continue

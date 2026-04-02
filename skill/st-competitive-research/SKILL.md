@@ -1,6 +1,6 @@
 ---
 name: st-competitive-research
-description: Generate a competitive research report by discovering competitors with rdt-cli (optional) and enriching each competitor with SensorTower metrics via st-cli (revenue as-of current month, 6-month growth ratio, first release date, market share). Use when the user asks for 竞品调研/竞品分析/竞争格局/landscape report and wants a final Markdown report.
+description: Generate a competitive research report by discovering competitors with rdt-cli (optional) and enriching each competitor with SensorTower metrics via st-cli (revenue/downloads/MAU as-of last month, 6-month growth ratio, first release date, market share). Use when the user asks for 竞品调研/竞品分析/竞争格局/landscape report and wants a final Markdown report.
 ---
 
 # st-competitive-research
@@ -9,13 +9,15 @@ description: Generate a competitive research report by discovering competitors w
 
 Produce a **single Markdown competitive research report** that includes:
 
-- **Market size**: proxy using SensorTower top apps revenue (as-of current month).
+- **Market size**: proxy using SensorTower top apps revenue (as-of last month).
 - **Competitor list**: discovered from Reddit (optional) or provided by user.
 - **Per-competitor metrics** from SensorTower (via `st landscape`):
-  - **Revenue (as-of current month, USD)**
+  - **Revenue (as-of last month, USD)**
+  - **Download counts (as-of last month)**
+  - **MAU (as-of last month)**
   - **Past 6 Months Growth** (ratio: current month / 6 months prior)
   - **First release date**
-  - **Market share (as-of current month)** within a chosen `category`
+  - **Market share (as-of last month)** within a chosen `category`
   - **Key Strength / Weakness** derived **only** from SensorTower review snippets
 
 ## Pre-flight check (must run first)

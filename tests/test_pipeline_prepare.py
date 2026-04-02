@@ -11,8 +11,8 @@ def test_prepare_plain_name():
 
 def test_prepare_ios_store_url_uses_slug_for_autocomplete():
     term, w = prepare_search_term("https://apps.apple.com/us/app/duolingo/id570060128")
-    assert term == "duolingo"
-    assert "using_ios_slug_from_url" in w
+    assert term == "570060128"
+    assert "using_ios_store_id_from_url" in w
 
 
 def test_prepare_play_store_url():
