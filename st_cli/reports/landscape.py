@@ -159,9 +159,9 @@ def render_landscape_report_md(*, source: dict[str, Any], competitors: list[dict
     lines.append("")
     lines.append(
         "| # | Product | B2B/B2C | AI-Powered | "
-        f"{month} Revenue | 6M Growth | First Release | Key Strength | Key Weakness |"
+            f"{month} Revenue | Trailing 12M Revenue | 6M Growth | First Release | Key Strength | Key Weakness |"
     )
-    lines.append("|---:|---|---|---|---|---|---|---|")
+    lines.append("|---:|---|---|---|---|---|---|---|---|---|")
 
     computed: list[dict[str, Any]] = []
     for idx, (rev, it) in enumerate(ranked, start=1):
@@ -184,6 +184,11 @@ def render_landscape_report_md(*, source: dict[str, Any], competitors: list[dict
                     _normalize_text(it.get("segment")),
                     _ai_powered_label(_normalize_text(it.get("ai_label"))),
                     _money_compact_usd(rev),
+                    _money_compact_usd(
+                        float(st.get("revenue_trailing_12_months_usd"))
+                        if isinstance(st.get("revenue_trailing_12_months_usd"), (int, float))
+                        else None
+                    ),
                     _normalize_text(it.get("growth_6m_label")),
                     _format_date(_parse_iso_date(_normalize_text(st.get("first_release_date_us")))),
                     _key_point(it.get("strengths") if isinstance(it.get("strengths"), list) else []),
@@ -234,6 +239,13 @@ def render_landscape_report_md(*, source: dict[str, Any], competitors: list[dict
 
         lines.append("")
         lines.append(f"- **{month} Revenue (as-of)**: {_money_compact_usd(rev)}")
+        trailing_12m = st.get("revenue_trailing_12_months_usd")
+        trailing_12m_val: float | None = None
+        if isinstance(trailing_12m, (int, float)):
+            trailing_12m_val = float(trailing_12m)
+        lines.append(
+            f"- **Trailing 12M Revenue (as-of {month})**: {_money_compact_usd(trailing_12m_val)}"
+        )
         share_obj = (st or {}).get("market_share_as_of_last_month")
         share_percent: float | None = None
         if isinstance(share_obj, dict):

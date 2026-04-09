@@ -142,6 +142,7 @@ st landscape --competitors-file competitors_batch1.txt --json | st landscape-rep
 `st landscape --json` 的 `data.competitors[].st` 中新增/常用字段：
 
 - **`revenue_last_month_usd`**：上一个自然月收入（USD）
+- **`revenue_trailing_12_months_usd`**：以上一个自然月为截止点的近 12 个月收入总和（USD）
 - **`revenue_6_months_ago_usd`**：6 个月前对应月份的收入（USD）
 - **`growth_vs_6m_percent`**：相对 6 个月前的增长率（百分比数值；无法计算时为 `null`）
 - **`first_release_date_us`**：首次发布时间（来自 facets/v2）

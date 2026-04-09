@@ -97,6 +97,23 @@ def _extract_month_value(monthly: list[dict[str, Any]], month_key: str) -> float
     return None
 
 
+def _sum_revenue_trailing_12_months(monthly: list[dict[str, Any]], end_month_key: str) -> float | None:
+    """Sum monthly revenue for trailing 12 months ending at `end_month_key`.
+
+    Returns None if any month in the 12-month window is missing/unparseable.
+    """
+    total = 0.0
+    for offset in range(12):
+        mk = _shift_month_key(end_month_key, -offset)
+        if not mk:
+            return None
+        v = _extract_month_value(monthly, mk)
+        if v is None:
+            return None
+        total += v
+    return total
+
+
 def _growth_vs_prev_percent(cur: float | None, prev: float | None) -> float | None:
     if cur is None or prev is None or prev <= 0:
         return None
@@ -918,6 +935,11 @@ def landscape(
                         "first_release_date_us": payload.get("first_release_date_us"),
                         "revenue_last_month_usd": revenue_last_month,
                         "revenue_as_of_last_month_usd": revenue_last_month,
+                        "revenue_trailing_12_months_usd": (
+                            _sum_revenue_trailing_12_months(monthly, month_key)
+                            if isinstance(monthly, list)
+                            else None
+                        ),
                         "market_share_as_of_last_month": {"share_percent": share_percent, "category": category_id},
                         "downloads_as_of_last_month": {"downloads_absolute": downloads_last_month},
                         "mau_as_of_last_month": {"mau_absolute": mau_last_month},
