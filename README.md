@@ -98,11 +98,11 @@ FreshBooks	https://apps.apple.com/us/app/freshbooks-invoice-tracking/id479925545
 Sage	https://apps.apple.com/us/app/sage/id1470884689
 ```
 
-然后运行（示例）：
+然后运行（示例，`/path/to/competitors.txt` 换成你自己的文件路径；仓库里的 `competitors_batch1.txt` 只是示例文件）：
 
 ```bash
 st landscape \
-  --competitors-file competitors_batch1.txt \
+  --competitors-file /path/to/competitors.txt \
   --limit 6 \
   --json \
   --out report.md
@@ -124,7 +124,7 @@ st landscape \
 先抓数据（产物可复用）：
 
 ```bash
-st landscape --competitors-file competitors_batch1.txt --json > landscape.json
+st landscape --competitors-file /path/to/competitors.txt --json > landscape.json
 ```
 
 再单独渲染报告（不再请求 Sensor Tower）：
@@ -136,7 +136,7 @@ st landscape-report --in landscape.json --out report.md --json
 也支持 stdin 管道：
 
 ```bash
-st landscape --competitors-file competitors_batch1.txt --json | st landscape-report --out report.md --json
+st landscape --competitors-file /path/to/competitors.txt --json | st landscape-report --out report.md --json
 ```
 
 ### `st landscape` JSON 字段补充说明
@@ -165,11 +165,11 @@ st snapshot "https://apps.apple.com/us/app/duolingo/id570060128" \
   --json
 ```
 
-竞品文件，同时输出 raw 和 landscape 两种形态：
+竞品文件，同时输出 raw 和 landscape 两种形态（`/path/to/competitors.txt` 换成你自己的文件路径）：
 
 ```bash
 st snapshot \
-  --competitors-file competitors_batch1.txt \
+  --competitors-file /path/to/competitors.txt \
   --start-date 2026-01-01 \
   --end-date 2026-01-31 \
   --shape both \
@@ -214,7 +214,7 @@ st snapshot \
 
 ```bash
 st snapshot \
-  --competitors-file competitors_batch1.txt \
+  --competitors-file /path/to/competitors.txt \
   --start-date 2026-03-09 \
   --end-date 2026-03-22 \
   --shape both \
@@ -231,7 +231,7 @@ st snapshot-report --in snapshot.json --out snapshot_report.md --json
 
 ```bash
 st snapshot \
-  --competitors-file competitors_batch1.txt \
+  --competitors-file /path/to/competitors.txt \
   --start-date 2026-03-09 \
   --end-date 2026-03-22 \
   --shape both \
