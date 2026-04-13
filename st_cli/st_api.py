@@ -559,6 +559,28 @@ def extract_mau_absolute_from_facets_v2_rows(
     return None
 
 
+def extract_wau_absolute_from_facets_v2_rows(
+    facet_rows: list[dict[str, Any]],
+) -> float | None:
+    """Extract `activeUsersWAUAbsolute` from the unified row (`appId is None`)."""
+    for row in facet_rows:
+        if row.get("appId") is not None:
+            continue
+        val = row.get("activeUsersWAUAbsolute")
+        if val is None or val == "":
+            return None
+        if isinstance(val, (int, float)):
+            return float(val)
+        s = str(val).strip()
+        if not s:
+            return None
+        try:
+            return float(s)
+        except ValueError:
+            return None
+    return None
+
+
 def extract_unified_app_id_from_facets_v2_rows(
     facet_rows: list[dict[str, Any]],
 ) -> int | None:

@@ -20,6 +20,8 @@ from st_cli.st_api import (
     extract_revenue_absolute_from_facets_v2_rows,
     extract_total_revenue_absolute_from_facets_v2_rows,
     extract_total_revenue_absolute_any_from_facets_v2_rows,
+    extract_unified_app_id_from_facets_v2_rows,
+    extract_wau_absolute_from_facets_v2_rows,
     get_csrf_token_for_top_apps_page,
     apps_facets_v2_month_slice,
     get_app_comments,
@@ -36,7 +38,7 @@ MARKET_SHARE_TOP_APPS_LIMIT_DEFAULT = 100
 
 _APP_CATEGORY_IDS_CACHE: dict[int, list[int]] = {}
 
-_MARKET_SHARE_TOTAL_CACHE: dict[tuple[str, int], float | None] = {}
+_MARKET_SHARE_TOTAL_CACHE: dict[tuple[Any, ...], float | None] = {}
 
 
 def _shift_month(d: date, months: int) -> date:
@@ -199,6 +201,47 @@ def prepare_search_term(raw_query: str) -> tuple[str, list[str]]:
         search_term = hints["android_package"]
         warnings.append("using_android_package_from_url")
     return search_term, warnings
+
+
+def prepare_search_term_candidates(raw_query: str) -> list[tuple[str, list[str]]]:
+    """Return prioritized autocomplete search terms for store URLs and plain queries."""
+    base = raw_query.strip()
+    if not base:
+        return [("", [])]
+
+    hints = extract_store_hints(base)
+    candidates: list[tuple[str, list[str]]] = []
+
+    def add(term: str | None, warning: str | None = None) -> None:
+        s = str(term or "").strip()
+        if not s:
+            return
+        warnings = [warning] if warning else []
+        item = (s, warnings)
+        if item not in candidates:
+            candidates.append(item)
+
+    if hints.get("ios_numeric_id"):
+        add(hints["ios_numeric_id"], "using_ios_store_id_from_url")
+    if hints.get("ios_slug"):
+        add(hints["ios_slug"], "using_ios_slug_from_url")
+    if hints.get("android_package"):
+        add(hints["android_package"], "using_android_package_from_url")
+    add(base)
+    return candidates
+
+
+def prepare_match_query(raw_query: str) -> str:
+    """Return a descriptive string for candidate scoring."""
+    base = raw_query.strip()
+    if not base:
+        return base
+    hints = extract_store_hints(base)
+    if hints.get("ios_slug"):
+        return str(hints["ios_slug"]).strip()
+    if hints.get("android_package"):
+        return str(hints["android_package"]).strip()
+    return base
 
 
 @dataclass(frozen=True)
@@ -386,6 +429,355 @@ def _get_previous_month_comparison_range(m_start: date) -> tuple[date, date]:
     return prev_start, prev_end
 
 
+def _comparison_range_for_window(start_date: date, end_date: date) -> tuple[date, date]:
+    window_days = (end_date - start_date).days
+    comparison_end = start_date - timedelta(days=1)
+    comparison_start = comparison_end - timedelta(days=window_days)
+    return comparison_start, comparison_end
+
+
+def _extract_unified_numeric_value(
+    facet_rows: list[dict[str, Any]],
+    key: str,
+    *,
+    divide_by: float = 1.0,
+) -> float | None:
+    for row in facet_rows:
+        if row.get("appId") is not None:
+            continue
+        val = row.get(key)
+        if val is None or val == "":
+            return None
+        if isinstance(val, (int, float)):
+            return float(val) / divide_by
+        s = str(val).strip()
+        if not s:
+            return None
+        try:
+            return float(s) / divide_by
+        except ValueError:
+            return None
+    return None
+
+
+def _growth_vs_previous_percent(current: float | None, previous: float | None) -> float | None:
+    if current is None or previous is None or previous == 0:
+        return None
+    return round((float(current) - float(previous)) / float(previous) * 100.0, 6)
+
+
+def _empty_market_share_payload(start_date: date, end_date: date) -> dict[str, Any]:
+    return {
+        "share_percent": None,
+        "start_date": start_date.isoformat(),
+        "end_date": end_date.isoformat(),
+        "market_revenue_total_proxy_usd": None,
+        "top_apps_limit": MARKET_SHARE_TOP_APPS_LIMIT_DEFAULT,
+        "category": None,
+        "category_candidates": [],
+    }
+
+
+def _resolve_market_share_category_ids(
+    client: httpx.Client,
+    chosen: dict[str, Any],
+    *,
+    csrf_token: str | None,
+    category_override: int | None,
+) -> list[int]:
+    if category_override is not None:
+        return [category_override]
+
+    category_ids = _extract_category_ids_from_obj(chosen)
+    if category_ids:
+        return category_ids
+
+    resolved_app_id = resolve_internal_entities_app_id(chosen)
+    if not isinstance(resolved_app_id, int):
+        return []
+    if resolved_app_id in _APP_CATEGORY_IDS_CACHE:
+        return _APP_CATEGORY_IDS_CACHE[resolved_app_id]
+
+    category_ids = []
+    apps = internal_entities(client, [resolved_app_id], csrf_token=csrf_token)
+    for app in apps:
+        if not isinstance(app, dict):
+            continue
+        category_ids.extend(_extract_category_ids_from_obj(app))
+    category_ids = _unique_ints(category_ids)
+    _APP_CATEGORY_IDS_CACHE[resolved_app_id] = category_ids
+    return category_ids
+
+
+def _compute_market_share_for_window(
+    client: httpx.Client,
+    *,
+    chosen: dict[str, Any],
+    warnings: list[str],
+    numerator_revenue_usd: float | None,
+    start_date: date,
+    end_date: date,
+    comparison_start: date,
+    comparison_end: date,
+    csrf_token: str | None,
+    market_share_category_override: int | None = None,
+    market_share_top_apps_limit: int = MARKET_SHARE_TOP_APPS_LIMIT_DEFAULT,
+) -> dict[str, Any]:
+    category_ids = _resolve_market_share_category_ids(
+        client,
+        chosen,
+        csrf_token=csrf_token,
+        category_override=market_share_category_override,
+    )
+    if not category_ids:
+        category_ids = [0]
+        warnings.append("market_share_category_infer_failed")
+
+    market_share_category_id = category_ids[0]
+    cache_key = (
+        start_date.isoformat(),
+        end_date.isoformat(),
+        market_share_category_id,
+        market_share_top_apps_limit,
+    )
+    if cache_key in _MARKET_SHARE_TOTAL_CACHE:
+        denom_total = _MARKET_SHARE_TOTAL_CACHE[cache_key]
+    else:
+        top_sub_ids = top_sub_app_ids(
+            client,
+            measure="revenue",
+            start_date=end_date,
+            end_date=end_date,
+            comparison_attribute="absolute",
+            category=market_share_category_id,
+            regions=DEFAULT_FACET_REGIONS,
+            limit=market_share_top_apps_limit,
+            csrf_token=csrf_token,
+        )
+        denom_rows = apps_facets_v2_month_slice(
+            client,
+            top_sub_ids,
+            start_date,
+            end_date,
+            comparison_start,
+            comparison_end,
+            csrf_token=csrf_token,
+        )
+        denom_total = extract_total_revenue_absolute_from_facets_v2_rows(denom_rows)
+        if denom_total is None:
+            denom_total = extract_total_revenue_absolute_any_from_facets_v2_rows(denom_rows)
+        _MARKET_SHARE_TOTAL_CACHE[cache_key] = denom_total
+
+    share_percent: float | None = None
+    if numerator_revenue_usd is not None and denom_total is not None and denom_total > 0:
+        share_percent = round(float(numerator_revenue_usd) / float(denom_total) * 100.0, 6)
+
+    return {
+        "share_percent": share_percent,
+        "start_date": start_date.isoformat(),
+        "end_date": end_date.isoformat(),
+        "market_revenue_total_proxy_usd": denom_total,
+        "top_apps_limit": market_share_top_apps_limit,
+        "category": market_share_category_id,
+        "category_candidates": category_ids,
+    }
+
+
+def run_snapshot_pipeline(
+    client: httpx.Client,
+    raw_query: str,
+    *,
+    start_date: date,
+    end_date: date,
+    match_query: str | None = None,
+    pick_1based: int | None = None,
+    auto_pick_first: bool = False,
+    pick_strategy: str = "heuristic",
+    market_share_category_override: int | None = None,
+    market_share_top_apps_limit: int = MARKET_SHARE_TOP_APPS_LIMIT_DEFAULT,
+) -> PipelineSuccess | PipelineDisambiguation | PipelineFailure:
+    """Resolve QUERY to ST app and pull one arbitrary-date snapshot."""
+    search_candidates = prepare_search_term_candidates(raw_query)
+    search_term = raw_query.strip()
+    warnings: list[str] = []
+    candidates: list[dict[str, Any]] = []
+    for term, term_warnings in search_candidates:
+        search_term = term
+        warnings = list(term_warnings)
+        candidates = autocomplete_search(client, search_term, limit=20)
+        if candidates:
+            break
+    if not candidates:
+        return PipelineFailure(
+            "not_found",
+            "No apps returned from autocomplete",
+            {"term": search_term},
+        )
+
+    score_query = prepare_match_query(match_query or raw_query)
+    idx: int | None = None
+    if pick_1based is not None:
+        idx = pick_1based - 1
+    elif auto_pick_first:
+        idx = 0
+        warnings.append("pick_strategy=first:auto_pick_first")
+    else:
+        strategy = (pick_strategy or "heuristic").strip().lower()
+        if len(candidates) <= 1:
+            idx = 0
+        elif strategy == "first":
+            idx = 0
+            warnings.append("pick_strategy=first")
+        elif strategy == "heuristic":
+            idx = _choose_candidate_heuristic(raw_query=score_query, candidates=candidates, warnings=warnings)
+        elif strategy == "fail":
+            idx = None
+            warnings.append("pick_strategy=fail")
+        else:
+            idx = _choose_candidate_heuristic(raw_query=score_query, candidates=candidates, warnings=warnings)
+    if idx is None:
+        return PipelineDisambiguation(
+            candidates=candidates,
+            warnings=warnings + ["needs_disambiguation:true"],
+            search_term=search_term,
+            raw_query=raw_query,
+        )
+
+    if idx < 0 or idx >= len(candidates):
+        return PipelineFailure(
+            "bad_request",
+            f"--pick out of range (1-{len(candidates)})",
+            None,
+        )
+
+    chosen = candidates[idx]
+    facet_ids = _derive_facet_ids_from_candidate(chosen)
+    if not facet_ids:
+        return PipelineFailure(
+            "upstream_error",
+            "Could not derive an `app_id` for `/api/apps/facets` from autocomplete result.",
+            chosen,
+        )
+
+    csrf_token = get_csrf_token_for_top_apps_page(client)
+    comparison_start, comparison_end = _comparison_range_for_window(start_date, end_date)
+
+    try:
+        rows = apps_facets_v2_month_slice(
+            client,
+            facet_ids,
+            start_date,
+            end_date,
+            comparison_start,
+            comparison_end,
+            csrf_token=csrf_token,
+        )
+    except RuntimeError as exc:
+        return PipelineFailure("upstream_error", str(exc), {"query": raw_query})
+
+    unified_app_id = extract_unified_app_id_from_facets_v2_rows(rows)
+    comments: list[dict[str, Any]] = []
+    try:
+        ios_apps = chosen.get("ios_apps")
+        ios_app_id: int | str | None = None
+        if isinstance(ios_apps, list) and ios_apps and isinstance(ios_apps[0], dict):
+            got = ios_apps[0].get("app_id")
+            if got is not None:
+                ios_app_id = got
+
+        android_apps = chosen.get("android_apps")
+        android_app_id: str | None = None
+        if isinstance(android_apps, list) and android_apps and isinstance(android_apps[0], dict):
+            got = android_apps[0].get("app_id")
+            if isinstance(got, str):
+                android_app_id = got
+
+        comments = get_app_comments(
+            client,
+            ios_app_id=ios_app_id,
+            android_app_id=android_app_id,
+            start_date=start_date,
+            end_date=end_date,
+            limit=COMMENTS_LIMIT,
+            csrf_token=csrf_token,
+        )
+    except RuntimeError as exc:
+        warnings.append(f"comments_failed:{exc}")
+
+    snapshot_revenue_usd = extract_revenue_absolute_from_facets_v2_rows(rows)
+    snapshot_revenue_previous_usd = _extract_unified_numeric_value(
+        rows,
+        "revenueAbsolutePrevious",
+        divide_by=100.0,
+    )
+    snapshot_downloads_absolute = extract_downloads_absolute_from_facets_v2_rows(rows)
+    snapshot_downloads_previous_absolute = _extract_unified_numeric_value(rows, "downloadsAbsolutePrevious")
+    snapshot_mau_absolute = extract_mau_absolute_from_facets_v2_rows(rows)
+    snapshot_mau_previous_absolute = _extract_unified_numeric_value(rows, "activeUsersMAUAbsolutePrevious")
+    snapshot_wau_absolute = extract_wau_absolute_from_facets_v2_rows(rows)
+    snapshot_wau_previous_absolute = _extract_unified_numeric_value(rows, "activeUsersWAUAbsolutePrevious")
+
+    payload: dict[str, Any] = {
+        "input": {"raw": raw_query, "search_term_used": search_term},
+        "selected": chosen,
+        "unified_app_id": unified_app_id,
+        "first_release_date_us": extract_first_release_date_us_from_facets_v2_rows(rows),
+        "snapshot_window": {
+            "start_date": start_date.isoformat(),
+            "end_date": end_date.isoformat(),
+            "comparison_start_date": comparison_start.isoformat(),
+            "comparison_end_date": comparison_end.isoformat(),
+        },
+        "snapshot": {
+            "revenue_usd": snapshot_revenue_usd,
+            "revenue_previous_window_usd": snapshot_revenue_previous_usd,
+            "revenue_growth_vs_previous_window_percent": _growth_vs_previous_percent(
+                snapshot_revenue_usd,
+                snapshot_revenue_previous_usd,
+            ),
+            "downloads_absolute": snapshot_downloads_absolute,
+            "downloads_previous_window_absolute": snapshot_downloads_previous_absolute,
+            "downloads_growth_vs_previous_window_percent": _growth_vs_previous_percent(
+                snapshot_downloads_absolute,
+                snapshot_downloads_previous_absolute,
+            ),
+            "mau_absolute": snapshot_mau_absolute,
+            "mau_previous_window_absolute": snapshot_mau_previous_absolute,
+            "mau_growth_vs_previous_window_percent": _growth_vs_previous_percent(
+                snapshot_mau_absolute,
+                snapshot_mau_previous_absolute,
+            ),
+            "wau_absolute": snapshot_wau_absolute,
+            "wau_previous_window_absolute": snapshot_wau_previous_absolute,
+            "wau_growth_vs_previous_window_percent": _growth_vs_previous_percent(
+                snapshot_wau_absolute,
+                snapshot_wau_previous_absolute,
+            ),
+        },
+        "comments": comments,
+        "warnings": warnings,
+    }
+    payload["market_share_in_window"] = _empty_market_share_payload(start_date, end_date)
+    payload["market_share_in_window"]["top_apps_limit"] = market_share_top_apps_limit
+    try:
+        payload["market_share_in_window"] = _compute_market_share_for_window(
+            client,
+            chosen=chosen,
+            warnings=warnings,
+            numerator_revenue_usd=snapshot_revenue_usd,
+            start_date=start_date,
+            end_date=end_date,
+            comparison_start=comparison_start,
+            comparison_end=comparison_end,
+            csrf_token=csrf_token,
+            market_share_category_override=market_share_category_override,
+            market_share_top_apps_limit=market_share_top_apps_limit,
+        )
+    except (RuntimeError, httpx.HTTPError) as exc:
+        warnings.append(f"market_share_failed:{exc}")
+    return PipelineSuccess(payload=payload)
+
+
 def run_fetch_pipeline(
     client: httpx.Client,
     raw_query: str,
@@ -418,6 +810,7 @@ def run_fetch_pipeline(
             {"term": search_term},
         )
 
+    score_query = prepare_match_query(raw_query)
     idx: int | None = None
     if pick_1based is not None:
         idx = pick_1based - 1
@@ -432,12 +825,12 @@ def run_fetch_pipeline(
             idx = 0
             warnings.append("pick_strategy=first")
         elif strategy == "heuristic":
-            idx = _choose_candidate_heuristic(raw_query=raw_query, candidates=candidates, warnings=warnings)
+            idx = _choose_candidate_heuristic(raw_query=score_query, candidates=candidates, warnings=warnings)
         elif strategy == "fail":
             idx = None
             warnings.append("pick_strategy=fail")
         else:
-            idx = _choose_candidate_heuristic(raw_query=raw_query, candidates=candidates, warnings=warnings)
+            idx = _choose_candidate_heuristic(raw_query=score_query, candidates=candidates, warnings=warnings)
 
     if idx is None:
         return PipelineDisambiguation(

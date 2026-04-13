@@ -11,6 +11,8 @@ from st_cli.commands import (
     fetch_cmd,
     landscape_cmd,
     landscape_report_cmd,
+    snapshot_cmd,
+    snapshot_report_cmd,
     status_cmd,
 )
 
@@ -33,5 +35,7 @@ cli.add_command(auth_cmd.logout)
 cli.add_command(status_cmd.status)
 cli.add_command(fetch_cmd.fetch)
 cli.add_command(batch_cmd.batch)
+cli.add_command(snapshot_cmd.snapshot)
+cli.add_command(snapshot_report_cmd.snapshot_report)
 cli.add_command(landscape_cmd.landscape)
 cli.add_command(landscape_report_cmd.landscape_report)

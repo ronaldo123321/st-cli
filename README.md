@@ -74,6 +74,8 @@ st fetch "QuickBooks" --json
 | `st status` | 用当前凭据探测 ST API 是否可用 |
 | `st fetch "<URL 或 应用名>"` | 自动完成 → 解析 app → 拉取 **最近 12 个月**月度收入（估算） |
 | `st batch -f queries.txt` | 对文件中每行执行与 `fetch` 相同的流水线（每行取自动完成第一条） |
+| `st snapshot ...` | 按 **任意起止日期** 拉取单 app 或竞品列表的区间快照，支持 raw / landscape / both 三种输出 |
+| `st snapshot-report ...` | 把 `st snapshot --json` 产出的 JSON 渲染成 Markdown 摘要，不再重复请求 ST |
 | `st landscape ...` | 抓取竞品格局数据（JSON/YAML），可选 `--out` 直接渲染 Markdown 报告 |
 | `st landscape-report ...` | **只做渲染**：把 `st landscape --json` 的输出渲染成 Markdown（不重复请求 ST） |
 
@@ -149,6 +151,92 @@ st landscape --competitors-file competitors_batch1.txt --json | st landscape-rep
 - **`market_share_as_of_last_month.share_percent`**：市场份额（两位小数百分比）
 - **`downloads_as_of_last_month.downloads_absolute`**：下载量（absolute）
 - **`mau_as_of_last_month.mau_absolute`**：月活人数（absolute）
+
+## 任意区间快照（`st snapshot`）
+
+`st snapshot` 用于替代“上一个自然月”语义，按你传入的 `start_date` / `end_date` 直接取一个区间快照。
+
+单 app raw 输出：
+
+```bash
+st snapshot "https://apps.apple.com/us/app/duolingo/id570060128" \
+  --start-date 2026-01-01 \
+  --end-date 2026-01-31 \
+  --json
+```
+
+竞品文件，同时输出 raw 和 landscape 两种形态：
+
+```bash
+st snapshot \
+  --competitors-file competitors_batch1.txt \
+  --start-date 2026-01-01 \
+  --end-date 2026-01-31 \
+  --shape both \
+  --json
+```
+
+- **输入来源**：二选一，传 `QUERY` 或 `--competitors-file`
+- **`--shape raw`**：返回 `data.raw.items[]`
+- **`--shape landscape`**：返回 `data.landscape.competitors[]`
+- **`--shape both`**：两种结构都返回，便于脚本和竞品分析共用
+
+`st snapshot --json` 中的核心字段：
+
+- **`source.start_date` / `source.end_date`**：本次快照的实际时间窗口
+- **`raw.items[].snapshot.revenue_usd`**：窗口内收入（USD）
+- **`raw.items[].snapshot.revenue_growth_vs_previous_window_percent`**：相对上一对齐窗口的收入增长率
+- **`raw.items[].snapshot.downloads_absolute`**：窗口内下载量
+- **`raw.items[].snapshot.downloads_growth_vs_previous_window_percent`**：相对上一对齐窗口的下载增长率
+- **`raw.items[].snapshot.mau_absolute`**：窗口内 MAU 口径值
+- **`raw.items[].snapshot.mau_growth_vs_previous_window_percent`**：相对上一对齐窗口的 MAU 增长率
+- **`raw.items[].snapshot.wau_absolute`**：窗口内 WAU 口径值
+- **`raw.items[].snapshot.wau_growth_vs_previous_window_percent`**：相对上一对齐窗口的 WAU 增长率
+- **`raw.items[].market_share_in_window.share_percent`**：该窗口内的收入市场份额代理值
+- **`raw.items[].comments[]`**：同一时间窗口内拉取的评论样本
+- **`landscape.competitors[].st.revenue_in_window_usd`**：竞品结构下的窗口收入
+- **`landscape.competitors[].st.revenue_growth_vs_previous_window_percent`**：竞品结构下的窗口收入增长率
+- **`landscape.competitors[].st.downloads_in_window.downloads_absolute`**：竞品结构下的窗口下载量
+- **`landscape.competitors[].st.mau_in_window.mau_absolute`**：竞品结构下的窗口 MAU
+- **`landscape.competitors[].st.wau_in_window.wau_absolute`**：竞品结构下的窗口 WAU
+- **`landscape.competitors[].st.market_share_in_window.share_percent`**：竞品结构下的窗口市场份额代理值
+- **`landscape.competitors[].st.reviews_in_window[]`**：竞品结构下的窗口评论样本
+
+其中 `market_share_in_window.share_percent` 是基于类目下 top-N apps 收入总和计算的 `top-N proxy market share`，不是全市场精确份额。
+
+上一窗口的定义与当前窗口等长，紧邻当前窗口之前。例如：
+
+- `2026-03-09 ~ 2026-03-22` 的 comparison window 会是 `2026-02-23 ~ 2026-03-08`
+
+### `st snapshot` 数据与渲染解耦
+
+先抓取快照数据：
+
+```bash
+st snapshot \
+  --competitors-file competitors_batch1.txt \
+  --start-date 2026-03-09 \
+  --end-date 2026-03-22 \
+  --shape both \
+  --json > snapshot.json
+```
+
+再单独渲染 Markdown 摘要：
+
+```bash
+st snapshot-report --in snapshot.json --out snapshot_report.md --json
+```
+
+也支持 stdin 管道：
+
+```bash
+st snapshot \
+  --competitors-file competitors_batch1.txt \
+  --start-date 2026-03-09 \
+  --end-date 2026-03-22 \
+  --shape both \
+  --json | st snapshot-report --out snapshot_report.md --json
+```
 
 ## 输出
 
