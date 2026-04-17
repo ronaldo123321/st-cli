@@ -14,7 +14,14 @@ import click
 from st_cli.auth import get_credential
 from st_cli.constants import CREDENTIAL_FILE, DEFAULT_FACET_REGIONS
 from st_cli.output import error_payload, print_payload, success_payload
-from st_cli.pipeline import PipelineDisambiguation, PipelineFailure, PipelineSuccess, run_fetch_pipeline
+from st_cli.pipeline import (
+    PipelineDisambiguation,
+    PipelineFailure,
+    PipelineSuccess,
+    fetch_version_timeline_for_selected,
+    run_fetch_pipeline,
+)
+from st_cli.st_api import get_csrf_token_for_top_apps_page
 from st_cli.reports.landscape import render_landscape_report_md
 from st_cli.st_client import create_st_client
 
@@ -725,6 +732,7 @@ def landscape(
 
     out_rows: list[dict[str, Any]] = []
     with create_st_client(cred.cookies) as client:
+        csrf_token = get_csrf_token_for_top_apps_page(client)
         for row in competitors[: max(1, limit)]:
             if row.store_url is None:
                 out_rows.append(
@@ -899,17 +907,26 @@ def landscape(
                     category_id = int(v_cat.strip())
 
             selected = payload.get("selected") if isinstance(payload.get("selected"), dict) else None
-            comments = payload.get("comments", [])[:5]
-            if not isinstance(comments, list):
-                comments = []
+            comments_full = payload.get("comments", [])
+            if not isinstance(comments_full, list):
+                comments_full = []
+            st_warnings = list(payload.get("warnings", [])) if isinstance(payload.get("warnings"), list) else []
+            versions, version_timeline = fetch_version_timeline_for_selected(
+                client,
+                selected,
+                reference_end_date=month_end,
+                csrf_token=csrf_token,
+                warnings=st_warnings,
+            )
+            comments_head = comments_full[:5]
             core_review = _normalize_text(row.core_review)
-            ai_label = _classify_ai_label(name=row.name, core_review=core_review, comments=comments)
+            ai_label = _classify_ai_label(name=row.name, core_review=core_review, comments=comments_head)
             segment = _classify_segment(
-                name=row.name, core_review=core_review, comments=comments, selected=selected
+                name=row.name, core_review=core_review, comments=comments_head, selected=selected
             )
             strengths, weaknesses = _extract_strength_weakness_bullets(
                 core_review=core_review,
-                comments=comments,
+                comments=comments_head,
                 rdt_positive=row.positive,
                 rdt_negative=row.negative,
             )
@@ -956,9 +973,11 @@ def landscape(
                             if isinstance(monthly, list)
                             else None
                         ),
-                        "comments": comments,
+                        "comments": comments_full,
+                        "versions": versions,
+                        "version_timeline": version_timeline,
                         "monthly_estimates": monthly if isinstance(monthly, list) else [],
-                        "warnings": payload.get("warnings", []),
+                        "warnings": st_warnings,
                     },
                     "error": None,
                 }

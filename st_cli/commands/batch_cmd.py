@@ -94,6 +94,7 @@ def batch(file_path: str, pick_strategy: str, as_json: bool, as_yaml: bool) -> N
                         "selected": p["selected"],
                         "unified_app_id": p["unified_app_id"],
                         "revenue": p["revenue"],
+                        "comments": p.get("comments", []),
                         "warnings": p["warnings"],
                     }
                 )

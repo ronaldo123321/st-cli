@@ -66,6 +66,10 @@ def _entry_from_raw_item(item: dict[str, Any]) -> dict[str, Any]:
         else {}
     )
     comments = item.get("comments") if isinstance(item.get("comments"), list) else []
+    versions = item.get("versions") if isinstance(item.get("versions"), list) else []
+    version_timeline = (
+        item.get("version_timeline") if isinstance(item.get("version_timeline"), dict) else {}
+    )
     selected = item.get("selected") if isinstance(item.get("selected"), dict) else {}
     name = (
         _normalize_text(selected.get("humanized_name"))
@@ -85,6 +89,8 @@ def _entry_from_raw_item(item: dict[str, Any]) -> dict[str, Any]:
         "market_share_percent": market_share.get("share_percent"),
         "review_count": len(comments),
         "comments": comments,
+        "versions": versions,
+        "version_timeline": version_timeline,
         "warnings": item.get("warnings") if isinstance(item.get("warnings"), list) else [],
         "error": None,
     }
@@ -101,6 +107,8 @@ def _entry_from_landscape_competitor(item: dict[str, Any]) -> dict[str, Any]:
         else {}
     )
     comments = st.get("reviews_in_window") if isinstance(st.get("reviews_in_window"), list) else []
+    versions = st.get("versions") if isinstance(st.get("versions"), list) else []
+    version_timeline = st.get("version_timeline") if isinstance(st.get("version_timeline"), dict) else {}
     error = item.get("error") if isinstance(item.get("error"), dict) else None
     return {
         "name": _normalize_text(item.get("name")),
@@ -115,6 +123,8 @@ def _entry_from_landscape_competitor(item: dict[str, Any]) -> dict[str, Any]:
         "market_share_percent": market_share.get("share_percent"),
         "review_count": len(comments),
         "comments": comments,
+        "versions": versions,
+        "version_timeline": version_timeline,
         "warnings": st.get("warnings") if isinstance(st.get("warnings"), list) else [],
         "error": error,
     }
@@ -228,6 +238,44 @@ def render_snapshot_report_md(
             lines.append(f"### {_normalize_text(item.get('name'))}")
             lines.append("")
             lines.append(f"- {_normalize_text(content)}")
+            lines.append("")
+
+    version_entries = [
+        it
+        for it in entries
+        if it.get("error") is None
+        and isinstance(it.get("versions"), list)
+        and len(it["versions"]) > 0
+    ]
+    if version_entries:
+        lines.append("## Recent version updates")
+        lines.append("")
+        lines.append(
+            "Rows are from the store update timeline, filtered to the age window in "
+            "`version_timeline` (default:30 days ending at snapshot `end_date`, storefront "
+            "`US`)."
+        )
+        lines.append("")
+        for item in version_entries:
+            versions = item.get("versions") if isinstance(item.get("versions"), list) else []
+            meta = item.get("version_timeline") if isinstance(item.get("version_timeline"), dict) else {}
+            plat = _normalize_text(meta.get("platform")) or "unknown"
+            country = _normalize_text(meta.get("country")) or "US"
+            lines.append(f"### {_normalize_text(item.get('name'))}")
+            lines.append("")
+            lines.append(f"- **Platform**: {plat} · **Storefront**: {country}")
+            lines.append("")
+            for row in versions[:8]:
+                if not isinstance(row, dict):
+                    continue
+                when = _normalize_text(row.get("time")) or "N/A"
+                ver = _normalize_text(row.get("version")) or "—"
+                note = row.get("featured_user_feedback")
+                note_s = _clean_snippet(note) if isinstance(note, str) and note.strip() else ""
+                if note_s:
+                    lines.append(f"- `{when}` **{ver}** — {note_s}")
+                else:
+                    lines.append(f"- `{when}` **{ver}**")
             lines.append("")
 
     return "\n".join(lines).rstrip() + "\n"

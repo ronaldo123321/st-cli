@@ -6,6 +6,18 @@ from datetime import date
 from st_cli.pipeline import PipelineSuccess, prepare_search_term, run_snapshot_pipeline
 
 
+def _patch_empty_update_history(monkeypatch):
+    empty = {"update_history": {"update_data": []}}
+    monkeypatch.setattr(
+        "st_cli.pipeline.get_ios_app_update_history",
+        lambda client, app_id, country, csrf_token=None: empty,
+    )
+    monkeypatch.setattr(
+        "st_cli.pipeline.get_android_app_update_history",
+        lambda client, app_id, country, csrf_token=None: empty,
+    )
+
+
 def test_prepare_plain_name():
     term, w = prepare_search_term("  Duolingo  ")
     assert term == "Duolingo"
@@ -63,6 +75,7 @@ def test_snapshot_pipeline_falls_back_to_ios_slug_when_id_returns_no_candidates(
         "st_cli.pipeline.get_app_comments",
         lambda client, ios_app_id, android_app_id, start_date, end_date, limit=20, csrf_token=None: [],
     )
+    _patch_empty_update_history(monkeypatch)
 
     with httpx.Client(base_url="https://example.com") as client:
         result = run_snapshot_pipeline(
@@ -120,6 +133,7 @@ def test_snapshot_pipeline_uses_url_slug_for_heuristic_disambiguation(monkeypatc
         "st_cli.pipeline.get_app_comments",
         lambda client, ios_app_id, android_app_id, start_date, end_date, limit=20, csrf_token=None: [],
     )
+    _patch_empty_update_history(monkeypatch)
 
     with httpx.Client(base_url="https://example.com") as client:
         result = run_snapshot_pipeline(
@@ -188,6 +202,7 @@ def test_snapshot_pipeline_includes_growth_and_market_share(monkeypatch):
         "st_cli.pipeline.get_app_comments",
         lambda client, ios_app_id, android_app_id, start_date, end_date, limit=20, csrf_token=None: [],
     )
+    _patch_empty_update_history(monkeypatch)
     monkeypatch.setattr(
         "st_cli.pipeline.top_sub_app_ids",
         lambda client, measure, start_date, end_date, comparison_attribute, category, regions, limit, csrf_token=None: [
@@ -215,3 +230,8 @@ def test_snapshot_pipeline_includes_growth_and_market_share(monkeypatch):
     assert market_share["share_percent"] == 12.34
     assert market_share["market_revenue_total_proxy_usd"] == 10000.0
     assert market_share["category"] == 6014
+    assert result.payload["versions"] == []
+    vt = result.payload["version_timeline"]
+    assert vt["platform"] == "ios"
+    assert vt["reference_end_date"] == "2026-03-22"
+    assert vt["max_age_days"] == 30

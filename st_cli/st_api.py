@@ -3,7 +3,7 @@
 import json
 import re
 import urllib.parse
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 import httpx
@@ -305,6 +305,168 @@ def get_csrf_token_for_top_apps_page(client: httpx.Client) -> str | None:
     if not m:
         return None
     return m.group(1)
+
+
+def get_ios_app_update_history(
+    client: httpx.Client,
+    *,
+    app_id: int | str,
+    country: str = "US",
+    csrf_token: str | None = None,
+) -> Any:
+    """GET ``/api/ios/app_update/get_app_update_history`` (Update Timeline data, iOS).
+
+    ``app_id`` is the numeric App Store id (e.g. from an ``apps.apple.com`` URL).
+
+    Args:
+        client: Authenticated Sensor Tower HTTP client.
+        app_id: iOS App Store numeric id.
+        country: Two-letter storefront country (default US).
+        csrf_token: Optional CSRF header; many tenants require it for this route.
+
+    Returns:
+        Parsed JSON body from Sensor Tower.
+    """
+    headers: dict[str, str] = {}
+    if csrf_token:
+        headers["x-csrf-token"] = csrf_token
+    r = client.get(
+        "/api/ios/app_update/get_app_update_history",
+        params={"app_id": str(app_id), "country": str(country).strip().upper()},
+        headers=headers,
+    )
+    return _parse_json_response(r)
+
+
+def get_android_app_update_history(
+    client: httpx.Client,
+    *,
+    app_id: int | str,
+    country: str = "US",
+    csrf_token: str | None = None,
+) -> Any:
+    """GET ``/api/android/app_update/get_app_update_history`` (Update Timeline data, Android).
+
+    ``app_id`` is usually the Play package name (e.g. ``com.instagram.android``) as used on the Sensor Tower update-timeline page.
+
+    Args:
+        client: Authenticated Sensor Tower HTTP client.
+        app_id: Android app identifier (commonly package name).
+        country: Two-letter country (default US).
+        csrf_token: Optional CSRF header.
+
+    Returns:
+        Parsed JSON body from Sensor Tower.
+    """
+    headers: dict[str, str] = {}
+    if csrf_token:
+        headers["x-csrf-token"] = csrf_token
+    r = client.get(
+        "/api/android/app_update/get_app_update_history",
+        params={"app_id": str(app_id), "country": str(country).strip().upper()},
+        headers=headers,
+    )
+    return _parse_json_response(r)
+
+
+def _update_data_rows_from_app_update_payload(raw: Any) -> list[Any]:
+    """Locate ``update_data`` list inside a ``get_app_update_history`` JSON body."""
+    if not isinstance(raw, dict):
+        return []
+    if isinstance(raw.get("update_data"), list):
+        return raw["update_data"]
+    nested = raw.get("update_history")
+    if isinstance(nested, dict) and isinstance(nested.get("update_data"), list):
+        return nested["update_data"]
+    data = raw.get("data")
+    if isinstance(data, dict):
+        if isinstance(data.get("update_data"), list):
+            return data["update_data"]
+        uh = data.get("update_history")
+        if isinstance(uh, dict) and isinstance(uh.get("update_data"), list):
+            return uh["update_data"]
+    return []
+
+
+def slim_app_update_timeline_entries(raw: Any) -> list[dict[str, Any]]:
+    """Keep only ``time``, ``version``, and ``featured_user_feedback`` per timeline row.
+
+    Sensor Tower returns ``update_data`` as a list of ``[iso_timestamp, detail_object]`` pairs.
+
+    Args:
+        raw: Parsed JSON from ``get_ios_app_update_history`` / ``get_android_app_update_history``.
+
+    Returns:
+        One dict per row with keys ``time``, ``version``, ``featured_user_feedback`` (values may
+        be ``null`` when absent).
+    """
+    rows = _update_data_rows_from_app_update_payload(raw)
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, list) or len(row) < 2:
+            continue
+        ts = row[0]
+        detail = row[1]
+        if not isinstance(detail, dict):
+            continue
+        out.append(
+            {
+                "time": ts,
+                "version": detail.get("version"),
+                "featured_user_feedback": detail.get("featured_user_feedback"),
+            }
+        )
+    return out
+
+
+def _parse_timeline_time_to_utc(value: Any) -> datetime | None:
+    """Parse ST timeline ``time`` strings (e.g. ``2024-04-13T00:00:00Z``) to UTC."""
+    if not isinstance(value, str):
+        return None
+    s = value.strip()
+    if not s:
+        return None
+    try:
+        if s.endswith("Z"):
+            s = s[:-1] + "+00:00"
+        dt = datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except ValueError:
+        return None
+
+
+def filter_timeline_entries_within_days(
+    entries: list[dict[str, Any]],
+    *,
+    days: int = 365,
+    reference: datetime | None = None,
+) -> list[dict[str, Any]]:
+    """Keep rows whose ``time`` is within the last ``days`` (relative to ``reference``, UTC).
+
+    Rows with missing or unparseable ``time`` are dropped.
+
+    Args:
+        entries: Slim timeline dicts (``time`` / ``version`` / ``featured_user_feedback``).
+        days: Window length in days (default 365).
+        reference: UTC "now" for tests; defaults to current UTC time.
+
+    Returns:
+        Filtered list in the same order as ``entries``.
+    """
+    if days < 0:
+        raise ValueError("days must be non-negative")
+    ref = reference if reference is not None else datetime.now(timezone.utc)
+    cutoff = ref - timedelta(days=days)
+    out: list[dict[str, Any]] = []
+    for entry in entries:
+        t = _parse_timeline_time_to_utc(entry.get("time"))
+        if t is None:
+            continue
+        if t >= cutoff:
+            out.append(entry)
+    return out
 
 
 def apps_facets_v2_month_slice(

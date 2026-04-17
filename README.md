@@ -52,6 +52,17 @@ st login --json
 
 3. **看错误详情**：若是 403，重点看 `st status --json` 返回里的 `response_headers` / `body_preview`；如果出现 Cloudflare 相关头（例如 `cf-ray`），可能是网络/WAF 限制，换网络或稍后重试。
 
+## 区域维度（`fetch` / `batch` / `snapshot` / `landscape`）
+
+调用 Sensor Tower facets 时，工具会把一组 **国家/地区代码**（两字母，与 ST 一致）传给接口。默认行为如下：
+
+- **默认**：使用内置的 **`GLOBAL_FACET_REGIONS`** 全表（与以前需要设置 `ST_FACET_REGIONS=global` 时等价），覆盖 README 对应源码 `st_cli/constants.py` 中的列表。
+- **仅美国**：`export ST_FACET_REGIONS=US`（也可用 `ST_REGIONS`，二者取先设置的那个）。
+- **自定义多个国家**：逗号分隔，例如 `export ST_FACET_REGIONS=US,GB,JP`。
+- **显式「全球」关键字**（与默认列表相同）：`global`、`world`、`worldwide`、`ww`（不区分大小写）。
+
+区域列表在进程启动时从环境变量解析一次；改环境变量后需重新执行命令。默认使用多区域时，单次请求体更大、总耗时通常比只查 US 更长。
+
 ## 快速开始（复制粘贴即可）
 
 ```bash
@@ -73,6 +84,7 @@ st fetch "QuickBooks" --json
 | `st logout` | 删除已保存的凭据文件 |
 | `st status` | 用当前凭据探测 ST API 是否可用 |
 | `st fetch "<URL 或 应用名>"` | 自动完成 → 解析 app → 拉取 **最近 12 个月**月度收入（估算） |
+| `st version "<URL / iOS 数字 id / 包名 / 应用名>"` | 拉取 ST **Update Timeline**（`/api/ios|android/app_update/get_app_update_history`），默认仅近 30 天 |
 | `st batch -f queries.txt` | 对文件中每行执行与 `fetch` 相同的流水线（每行取自动完成第一条） |
 | `st snapshot ...` | 按 **任意起止日期** 拉取单 app 或竞品列表的区间快照，支持 raw / landscape / both 三种输出 |
 | `st snapshot-report ...` | 把 `st snapshot --json` 产出的 JSON 渲染成 Markdown 摘要，不再重复请求 ST |
@@ -84,6 +96,21 @@ st fetch "QuickBooks" --json
 ```bash
 st fetch "Duolingo" --pick 1 --json
 ```
+
+## 版本更新时间线（`st version`）
+
+对应网页 **Update Timeline**；数据来自 ST 的 `get_app_update_history` 接口（需有效登录与 CSRF，与网页一致）。
+
+```bash
+# iOS：数字 App Store id（或 App Store URL，与 fetch 同源解析）
+st version 389801252 --country US --json
+
+# Android：Play 链接或包名（`com.example.app`）
+st version "https://play.google.com/store/apps/details?id=com.instagram.android" --json
+
+```
+
+成功时 `data.versions` 为时间线列表，每项仅含 **`time`**、**`version`**、**`featured_user_feedback`**。默认只保留 **`time` 落在最近 30 天（UTC，相对当前时间）** 内的记录；可用 `--max-age-days N` 调整窗口（例如 `365` 看近一年）。`data.max_age_days` 反映本次使用的窗口。`data.platform` / `data.app_id` 标明商店与 id。多结果时需加 `--pick N`（与 `fetch` 相同）。
 
 ## 竞品格局（`st landscape`）
 
@@ -115,6 +142,8 @@ st landscape \
   - **`Market share`**：市场份额（上一个自然月口径），两位小数百分比
   - **`Downloads`**：下载量（上一个自然月口径，absolute）
   - **`MAU`**：月活人数（上一个自然月口径，absolute）
+  - **`competitors[].st.comments[]`**：Sensor Tower 用户评论样本（与 `st fetch` 同源时间窗口与条数上限）
+  - **`competitors[].st.versions[]`**、**`competitors[].st.version_timeline`**：商店版本更新时间线，相对 JSON里 **`source.as_of`** 对应日期的 UTC 日末起 **近 30 天**（店面默认 **`US`**，与 `st snapshot` 一致）
 
 - **`--limit`**：最多输出 N 个竞品（会对输入名单做解析/匹配，个别名称可能解析失败）
 - **`--out`**：生成 Markdown 报告路径
@@ -193,7 +222,9 @@ st snapshot \
 - **`raw.items[].snapshot.wau_absolute`**：窗口内 WAU 口径值
 - **`raw.items[].snapshot.wau_growth_vs_previous_window_percent`**：相对上一对齐窗口的 WAU 增长率
 - **`raw.items[].market_share_in_window.share_percent`**：该窗口内的收入市场份额代理值
-- **`raw.items[].comments[]`**：同一时间窗口内拉取的评论样本
+- **`raw.items[].comments[]`**：与快照窗口 `start_date`～`end_date` 对齐拉取的商店评论样本
+- **`raw.items[].versions[]`**：商店版本更新时间线（与 `st version` 同源 API），按 `version_timeline` 中的 `max_age_days` 过滤；时间参考点为快照 **`end_date`** 当日 UTC 结束时刻（默认近 **30 天**、店面 **`US`**）
+- **`raw.items[].version_timeline`**：`country`、`max_age_days`、`reference_end_date`（=快照 `end_date`）、`platform`（`ios` / `android` / `null`）
 - **`landscape.competitors[].st.revenue_in_window_usd`**：竞品结构下的窗口收入
 - **`landscape.competitors[].st.revenue_growth_vs_previous_window_percent`**：竞品结构下的窗口收入增长率
 - **`landscape.competitors[].st.downloads_in_window.downloads_absolute`**：竞品结构下的窗口下载量
@@ -201,6 +232,7 @@ st snapshot \
 - **`landscape.competitors[].st.wau_in_window.wau_absolute`**：竞品结构下的窗口 WAU
 - **`landscape.competitors[].st.market_share_in_window.share_percent`**：竞品结构下的窗口市场份额代理值
 - **`landscape.competitors[].st.reviews_in_window[]`**：竞品结构下的窗口评论样本
+- **`landscape.competitors[].st.versions[]`** / **`version_timeline`**：与 raw 相同语义的版本更新时间线
 
 其中 `market_share_in_window.share_percent` 是基于类目下 top-N apps 收入总和计算的 `top-N proxy market share`，不是全市场精确份额。
 

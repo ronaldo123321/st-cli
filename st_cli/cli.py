@@ -14,6 +14,7 @@ from st_cli.commands import (
     snapshot_cmd,
     snapshot_report_cmd,
     status_cmd,
+    version_cmd,
 )
 
 
@@ -34,6 +35,7 @@ cli.add_command(auth_cmd.login)
 cli.add_command(auth_cmd.logout)
 cli.add_command(status_cmd.status)
 cli.add_command(fetch_cmd.fetch)
+cli.add_command(version_cmd.version)
 cli.add_command(batch_cmd.batch)
 cli.add_command(snapshot_cmd.snapshot)
 cli.add_command(snapshot_report_cmd.snapshot_report)

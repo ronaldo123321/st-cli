@@ -69,6 +69,23 @@ def _clean_snippet(text: str) -> str:
     return _clip_sentence(s, 220)
 
 
+def _format_timeline_version_cell(v: Any) -> str:
+    if v is None:
+        return "—"
+    if isinstance(v, dict):
+        after = _normalize_text(v.get("after"))
+        before = _normalize_text(v.get("before"))
+        summary = _normalize_text(v.get("version_summary"))
+        if after and before:
+            return f"{before} → {after}"
+        if after:
+            return after
+        if summary:
+            return summary
+        return "—"
+    return _normalize_text(v) or "—"
+
+
 def _parse_iso_date(v: Any) -> date | None:
     s = _normalize_text(v)
     if not s:
@@ -309,6 +326,49 @@ def render_landscape_report_md(*, source: dict[str, Any], competitors: list[dict
             if pts:
                 lines.append(f"- Trend (6m sparkline): {_sparkline(pts)}")
         lines.append("")
+
+        comments_full = st.get("comments") if isinstance(st.get("comments"), list) else []
+        if comments_full:
+            lines.append("**Store reviews (sample)**")
+            lines.append("")
+            shown = 0
+            for c in comments_full:
+                if shown >= 3:
+                    break
+                if not isinstance(c, dict):
+                    continue
+                body = _clean_snippet(_normalize_text(c.get("content")))
+                if not body:
+                    continue
+                lines.append(f"- {body}")
+                shown += 1
+            lines.append("")
+
+        versions = st.get("versions") if isinstance(st.get("versions"), list) else []
+        if versions:
+            lines.append("**Recent version updates**")
+            lines.append("")
+            vmeta = st.get("version_timeline") if isinstance(st.get("version_timeline"), dict) else {}
+            plat = _normalize_text(vmeta.get("platform")) or "unknown"
+            country = _normalize_text(vmeta.get("country")) or "US"
+            ref_end = _normalize_text(vmeta.get("reference_end_date"))
+            lines.append(
+                f"- Filter: last {vmeta.get('max_age_days', 30)} days (UTC) ending {ref_end or 'N/A'} · "
+                f"{plat} · storefront {country}"
+            )
+            lines.append("")
+            for row in versions[:8]:
+                if not isinstance(row, dict):
+                    continue
+                when = _normalize_text(row.get("time")) or "N/A"
+                ver = _format_timeline_version_cell(row.get("version"))
+                note = row.get("featured_user_feedback")
+                note_s = _clean_snippet(note) if isinstance(note, str) and note.strip() else ""
+                if note_s:
+                    lines.append(f"- `{when}` **{ver}** — {note_s}")
+                else:
+                    lines.append(f"- `{when}` **{ver}**")
+            lines.append("")
 
     return "\n".join(lines).rstrip() + "\n"
 

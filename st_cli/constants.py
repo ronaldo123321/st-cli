@@ -133,15 +133,22 @@ GLOBAL_FACET_REGIONS = [
 
 
 def _resolve_facet_regions() -> list[str]:
-    raw = os.environ.get("ST_FACET_REGIONS") or os.environ.get("ST_REGIONS") or "US"
+    """Default: all regions in ``GLOBAL_FACET_REGIONS`` (same as ``ST_FACET_REGIONS=global``).
+
+    Override with ``ST_FACET_REGIONS`` or ``ST_REGIONS``: comma-separated codes (e.g. ``US``),
+    or ``global`` / ``world`` / ``worldwide`` / ``ww`` for the built-in global list.
+    """
+    raw = os.environ.get("ST_FACET_REGIONS") or os.environ.get("ST_REGIONS")
+    if raw is None:
+        return list(GLOBAL_FACET_REGIONS)
     v = raw.strip()
     if not v:
-        return ["US"]
+        return list(GLOBAL_FACET_REGIONS)
     if v.lower() in {"global", "world", "worldwide", "ww"}:
         return list(GLOBAL_FACET_REGIONS)
     parts = [p.strip().upper() for p in v.split(",")]
     out = [p for p in parts if p]
-    return out or ["US"]
+    return out or list(GLOBAL_FACET_REGIONS)
 
 
 DEFAULT_FACET_REGIONS = _resolve_facet_regions()

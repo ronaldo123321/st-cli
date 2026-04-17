@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 import time
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from dataclasses import dataclass
 from typing import Any
 
@@ -24,17 +24,24 @@ from st_cli.st_api import (
     extract_wau_absolute_from_facets_v2_rows,
     get_csrf_token_for_top_apps_page,
     apps_facets_v2_month_slice,
+    filter_timeline_entries_within_days,
+    get_android_app_update_history,
     get_app_comments,
+    get_ios_app_update_history,
     internal_entities,
     resolve_internal_entities_app_id,
     month_ranges_last_n_months,
     top_sub_app_ids,
+    slim_app_update_timeline_entries,
 )
 
 MONTH_WINDOW_MONTHS = 12
 COMMENTS_LOOKBACK_DAYS = 120
 COMMENTS_LIMIT = 20
 MARKET_SHARE_TOP_APPS_LIMIT_DEFAULT = 100
+# Update-timeline API storefront (matches ``st version`` default; facets may use broader regions).
+SNAPSHOT_VERSION_TIMELINE_COUNTRY = "US"
+SNAPSHOT_VERSION_TIMELINE_MAX_AGE_DAYS = 30
 
 _APP_CATEGORY_IDS_CACHE: dict[int, list[int]] = {}
 
@@ -583,6 +590,86 @@ def _compute_market_share_for_window(
     }
 
 
+def fetch_version_timeline_for_selected(
+    client: httpx.Client,
+    selected: Any,
+    *,
+    reference_end_date: date,
+    csrf_token: str | None,
+    warnings: list[str] | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Slim update-timeline rows within ``SNAPSHOT_VERSION_TIMELINE_MAX_AGE_DAYS`` of ``reference_end_date`` (UTC end-of-day).
+
+    Used by ``run_snapshot_pipeline`` and ``st landscape`` so version windows stay consistent.
+    """
+    version_country = SNAPSHOT_VERSION_TIMELINE_COUNTRY.strip().upper() or "US"
+    meta: dict[str, Any] = {
+        "country": version_country,
+        "max_age_days": SNAPSHOT_VERSION_TIMELINE_MAX_AGE_DAYS,
+        "reference_end_date": reference_end_date.isoformat(),
+        "platform": None,
+    }
+    warn = warnings if warnings is not None else []
+    if not isinstance(selected, dict):
+        return [], meta
+
+    ios_apps = selected.get("ios_apps")
+    ios_app_id: int | str | None = None
+    if isinstance(ios_apps, list) and ios_apps and isinstance(ios_apps[0], dict):
+        got = ios_apps[0].get("app_id")
+        if got is not None:
+            ios_app_id = got
+
+    android_apps = selected.get("android_apps")
+    android_app_id: str | None = None
+    if isinstance(android_apps, list) and android_apps and isinstance(android_apps[0], dict):
+        got = android_apps[0].get("app_id")
+        if isinstance(got, str):
+            android_app_id = got
+
+    versions: list[dict[str, Any]] = []
+    version_platform: str | None = None
+    try:
+        raw_hist: Any = None
+        if ios_app_id is not None:
+            version_platform = "ios"
+            raw_hist = get_ios_app_update_history(
+                client,
+                app_id=ios_app_id,
+                country=version_country,
+                csrf_token=csrf_token,
+            )
+        elif android_app_id is not None:
+            version_platform = "android"
+            raw_hist = get_android_app_update_history(
+                client,
+                app_id=android_app_id,
+                country=version_country,
+                csrf_token=csrf_token,
+            )
+        if raw_hist is not None:
+            slim = slim_app_update_timeline_entries(raw_hist)
+            ref_dt = datetime(
+                reference_end_date.year,
+                reference_end_date.month,
+                reference_end_date.day,
+                23,
+                59,
+                59,
+                tzinfo=timezone.utc,
+            )
+            versions = filter_timeline_entries_within_days(
+                slim,
+                days=SNAPSHOT_VERSION_TIMELINE_MAX_AGE_DAYS,
+                reference=ref_dt,
+            )
+    except RuntimeError as exc:
+        warn.append(f"version_timeline_failed:{exc}")
+
+    meta["platform"] = version_platform
+    return versions, meta
+
+
 def run_snapshot_pipeline(
     client: httpx.Client,
     raw_query: str,
@@ -676,22 +763,23 @@ def run_snapshot_pipeline(
         return PipelineFailure("upstream_error", str(exc), {"query": raw_query})
 
     unified_app_id = extract_unified_app_id_from_facets_v2_rows(rows)
+
+    ios_apps = chosen.get("ios_apps")
+    ios_app_id: int | str | None = None
+    if isinstance(ios_apps, list) and ios_apps and isinstance(ios_apps[0], dict):
+        got = ios_apps[0].get("app_id")
+        if got is not None:
+            ios_app_id = got
+
+    android_apps = chosen.get("android_apps")
+    android_app_id: str | None = None
+    if isinstance(android_apps, list) and android_apps and isinstance(android_apps[0], dict):
+        got = android_apps[0].get("app_id")
+        if isinstance(got, str):
+            android_app_id = got
+
     comments: list[dict[str, Any]] = []
     try:
-        ios_apps = chosen.get("ios_apps")
-        ios_app_id: int | str | None = None
-        if isinstance(ios_apps, list) and ios_apps and isinstance(ios_apps[0], dict):
-            got = ios_apps[0].get("app_id")
-            if got is not None:
-                ios_app_id = got
-
-        android_apps = chosen.get("android_apps")
-        android_app_id: str | None = None
-        if isinstance(android_apps, list) and android_apps and isinstance(android_apps[0], dict):
-            got = android_apps[0].get("app_id")
-            if isinstance(got, str):
-                android_app_id = got
-
         comments = get_app_comments(
             client,
             ios_app_id=ios_app_id,
@@ -703,6 +791,14 @@ def run_snapshot_pipeline(
         )
     except RuntimeError as exc:
         warnings.append(f"comments_failed:{exc}")
+
+    versions, version_timeline = fetch_version_timeline_for_selected(
+        client,
+        chosen,
+        reference_end_date=end_date,
+        csrf_token=csrf_token,
+        warnings=warnings,
+    )
 
     snapshot_revenue_usd = extract_revenue_absolute_from_facets_v2_rows(rows)
     snapshot_revenue_previous_usd = _extract_unified_numeric_value(
@@ -755,6 +851,8 @@ def run_snapshot_pipeline(
             ),
         },
         "comments": comments,
+        "versions": versions,
+        "version_timeline": version_timeline,
         "warnings": warnings,
     }
     payload["market_share_in_window"] = _empty_market_share_payload(start_date, end_date)

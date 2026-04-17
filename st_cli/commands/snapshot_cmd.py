@@ -65,6 +65,8 @@ def _build_raw_item(query: str, payload: dict[str, Any]) -> dict[str, Any]:
         "snapshot": payload.get("snapshot"),
         "market_share_in_window": payload.get("market_share_in_window"),
         "comments": payload.get("comments", []),
+        "versions": payload.get("versions", []),
+        "version_timeline": payload.get("version_timeline"),
         "warnings": payload.get("warnings", []),
     }
 
@@ -102,6 +104,8 @@ def _build_landscape_item(name: str, store_url: str | None, payload: dict[str, A
             },
             "market_share_in_window": payload.get("market_share_in_window"),
             "reviews_in_window": payload.get("comments", []),
+            "versions": payload.get("versions", []),
+            "version_timeline": payload.get("version_timeline"),
             "warnings": payload.get("warnings", []),
         },
         "error": None,

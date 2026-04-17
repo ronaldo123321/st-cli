@@ -71,6 +71,19 @@ def _sample_snapshot_payload(raw_query: str) -> dict:
                 "created_at": "2026-01-15",
             }
         ],
+        "versions": [
+            {
+                "time": "2026-01-20T00:00:00Z",
+                "version": "5.200.0",
+                "featured_user_feedback": "Stability improvements.",
+            }
+        ],
+        "version_timeline": {
+            "country": "US",
+            "max_age_days": 30,
+            "reference_end_date": "2026-01-31",
+            "platform": "ios",
+        },
         "warnings": ["using_ios_store_id_from_url"],
     }
 
@@ -110,6 +123,8 @@ def test_snapshot_single_query_outputs_raw_shape(monkeypatch):
     assert item["snapshot"]["revenue_growth_vs_previous_window_percent"] == 20.0
     assert item["market_share_in_window"]["share_percent"] == 12.0
     assert item["comments"][0]["content"] == "Very useful app"
+    assert item["versions"][0]["version"] == "5.200.0"
+    assert item["version_timeline"]["reference_end_date"] == "2026-01-31"
 
 
 def test_snapshot_competitors_file_outputs_both_shapes(monkeypatch, tmp_path: Path):
@@ -156,6 +171,7 @@ def test_snapshot_competitors_file_outputs_both_shapes(monkeypatch, tmp_path: Pa
     assert competitor["st"]["wau_in_window"]["growth_vs_previous_window_percent"] == 10.0
     assert competitor["st"]["market_share_in_window"]["share_percent"] == 12.0
     assert competitor["st"]["reviews_in_window"][0]["content"] == "Very useful app"
+    assert competitor["st"]["versions"][0]["version"] == "5.200.0"
 
 
 def test_snapshot_rejects_end_date_before_start_date():

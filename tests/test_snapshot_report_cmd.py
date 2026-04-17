@@ -51,6 +51,19 @@ def _snapshot_env(shape: str = "raw") -> dict:
                             "created_at": "2026-03-15",
                         }
                     ],
+                    "versions": [
+                        {
+                            "time": "2026-03-10T00:00:00Z",
+                            "version": "24.3.1",
+                            "featured_user_feedback": "Performance fixes.",
+                        }
+                    ],
+                    "version_timeline": {
+                        "country": "US",
+                        "max_age_days": 30,
+                        "reference_end_date": "2026-03-22",
+                        "platform": "ios",
+                    },
                     "warnings": [],
                 }
             ],
@@ -100,6 +113,19 @@ def _snapshot_env(shape: str = "raw") -> dict:
                                 "created_at": "2026-03-15",
                             }
                         ],
+                        "versions": [
+                            {
+                                "time": "2026-03-10T00:00:00Z",
+                                "version": "24.3.1",
+                                "featured_user_feedback": "Performance fixes.",
+                            }
+                        ],
+                        "version_timeline": {
+                            "country": "US",
+                            "max_age_days": 30,
+                            "reference_end_date": "2026-03-22",
+                            "platform": "ios",
+                        },
                         "warnings": [],
                     },
                     "error": None,
@@ -149,6 +175,9 @@ def test_snapshot_report_renders_markdown_from_snapshot_json(tmp_path: Path):
     assert "$1.06M" in report_md
     assert "2.34%" in report_md
     assert "Been using QuickBooks for 10+ years." in report_md
+    assert "## Recent version updates" in report_md
+    assert "24.3.1" in report_md
+    assert "Performance fixes." in report_md
     assert "Wave" in report_md
     assert "needs_disambiguation" in report_md
 
