@@ -41,8 +41,8 @@ def test_prepare_play_store_url():
 def test_snapshot_pipeline_falls_back_to_ios_slug_when_id_returns_no_candidates(monkeypatch):
     seen_terms: list[str] = []
 
-    def fake_autocomplete_search(client: httpx.Client, term: str, limit: int = 20):
-        del client, limit
+    def fake_autocomplete_search(client: httpx.Client, term: str, limit: int = 20, csrf_token: str | None = None):
+        del client, limit, csrf_token
         seen_terms.append(term)
         if term == "422067011":
             return []
@@ -92,8 +92,8 @@ def test_snapshot_pipeline_falls_back_to_ios_slug_when_id_returns_no_candidates(
 
 
 def test_snapshot_pipeline_uses_url_slug_for_heuristic_disambiguation(monkeypatch):
-    def fake_autocomplete_search(client: httpx.Client, term: str, limit: int = 20):
-        del client, limit
+    def fake_autocomplete_search(client: httpx.Client, term: str, limit: int = 20, csrf_token: str | None = None):
+        del client, limit, csrf_token
         assert term == "Xero"
         return [
             {
@@ -149,8 +149,8 @@ def test_snapshot_pipeline_uses_url_slug_for_heuristic_disambiguation(monkeypatc
 
 
 def test_snapshot_pipeline_includes_growth_and_market_share(monkeypatch):
-    def fake_autocomplete_search(client: httpx.Client, term: str, limit: int = 20):
-        del client, limit
+    def fake_autocomplete_search(client: httpx.Client, term: str, limit: int = 20, csrf_token: str | None = None):
+        del client, limit, csrf_token
         assert term == "Duolingo"
         return [
             {

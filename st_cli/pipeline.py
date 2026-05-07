@@ -688,10 +688,11 @@ def run_snapshot_pipeline(
     search_term = raw_query.strip()
     warnings: list[str] = []
     candidates: list[dict[str, Any]] = []
+    csrf_token = get_csrf_token_for_top_apps_page(client)
     for term, term_warnings in search_candidates:
         search_term = term
         warnings = list(term_warnings)
-        candidates = autocomplete_search(client, search_term, limit=20)
+        candidates = autocomplete_search(client, search_term, limit=20, csrf_token=csrf_token)
         if candidates:
             break
     if not candidates:
@@ -745,8 +746,6 @@ def run_snapshot_pipeline(
             "Could not derive an `app_id` for `/api/apps/facets` from autocomplete result.",
             chosen,
         )
-
-    csrf_token = get_csrf_token_for_top_apps_page(client)
     comparison_start, comparison_end = _comparison_range_for_window(start_date, end_date)
 
     try:
@@ -899,8 +898,9 @@ def run_fetch_pipeline(
     Returns:
         Success with ``payload``, disambiguation request, or failure.
     """
+    csrf_token = get_csrf_token_for_top_apps_page(client)
     search_term, warnings = prepare_search_term(raw_query)
-    candidates = autocomplete_search(client, search_term, limit=20)
+    candidates = autocomplete_search(client, search_term, limit=20, csrf_token=csrf_token)
     if not candidates:
         return PipelineFailure(
             "not_found",
@@ -954,7 +954,6 @@ def run_fetch_pipeline(
             "Could not derive an `app_id` for `/api/apps/facets` from autocomplete result.",
             chosen,
         )
-    csrf_token = get_csrf_token_for_top_apps_page(client)
 
     # Align with SensorTower "as-of" delay (data available up to ~2 days ago).
     month_windows = month_ranges_last_n_months(

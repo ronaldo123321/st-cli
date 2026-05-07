@@ -41,8 +41,11 @@ def _parse_json_response(resp: httpx.Response) -> Any:
     return json.loads(text)
 
 
-def probe_session(client: httpx.Client) -> dict[str, Any]:
-    """GET autocomplete to verify cookies (same as crawler)."""
+def probe_session(client: httpx.Client, *, csrf_token: str | None = None) -> dict[str, Any]:
+    """GET autocomplete to verify cookies (same as crawler).
+
+    Sensor Tower increasingly requires `x-csrf-token` on GET endpoints.
+    """
     params = {
         "entity_type": "app",
         "expand_entities": "true",
@@ -53,7 +56,10 @@ def probe_session(client: httpx.Client) -> dict[str, Any]:
         "term": "a",
     }
     q = urllib.parse.urlencode(params)
-    r = client.get(f"/api/autocomplete_search?{q}")
+    headers: dict[str, str] = {}
+    if csrf_token:
+        headers["x-csrf-token"] = csrf_token
+    r = client.get(f"/api/autocomplete_search?{q}", headers=headers or None)
     if r.status_code == 200:
         try:
             _parse_json_response(r)
@@ -81,7 +87,9 @@ def probe_session(client: httpx.Client) -> dict[str, Any]:
     return err
 
 
-def autocomplete_search(client: httpx.Client, term: str, limit: int = 20) -> list[dict[str, Any]]:
+def autocomplete_search(
+    client: httpx.Client, term: str, limit: int = 20, *, csrf_token: str | None = None
+) -> list[dict[str, Any]]:
     """GET /api/autocomplete_search."""
     params = {
         "entity_type": "app",
@@ -93,7 +101,10 @@ def autocomplete_search(client: httpx.Client, term: str, limit: int = 20) -> lis
         "term": term,
     }
     q = urllib.parse.urlencode(params)
-    r = client.get(f"/api/autocomplete_search?{q}")
+    headers: dict[str, str] = {}
+    if csrf_token:
+        headers["x-csrf-token"] = csrf_token
+    r = client.get(f"/api/autocomplete_search?{q}", headers=headers or None)
     data = _parse_json_response(r)
     entities = (
         data.get("data", {}).get("entities", [])

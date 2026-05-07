@@ -86,7 +86,11 @@ def test_version_needs_disambiguation(monkeypatch):
     monkeypatch.setattr(version_cmd, "create_st_client", lambda cookies: _ClientContext())
     monkeypatch.setattr(version_cmd, "get_csrf_token_for_top_apps_page", lambda client: None)
 
-    monkeypatch.setattr(version_cmd, "autocomplete_search", lambda client, term, limit=20: [{"name": "A"}, {"name": "B"}])
+    monkeypatch.setattr(
+        version_cmd,
+        "autocomplete_search",
+        lambda client, term, limit=20, csrf_token=None: [{"name": "A"}, {"name": "B"}],
+    )
     monkeypatch.setattr(
         version_cmd,
         "_choose_candidate_heuristic",

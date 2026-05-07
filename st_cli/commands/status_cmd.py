@@ -8,7 +8,7 @@ import httpx
 from st_cli.auth import get_credential
 from st_cli.constants import CREDENTIAL_FILE
 from st_cli.output import error_payload, print_payload, success_payload
-from st_cli.st_api import probe_session
+from st_cli.st_api import get_csrf_token_for_top_apps_page, probe_session
 from st_cli.st_client import create_st_client
 
 logger = logging.getLogger(__name__)
@@ -34,7 +34,8 @@ def status(as_json: bool, as_yaml: bool) -> None:
 
     try:
         with create_st_client(cred.cookies) as client:
-            info = probe_session(client)
+            csrf_token = get_csrf_token_for_top_apps_page(client)
+            info = probe_session(client, csrf_token=csrf_token)
     except httpx.HTTPError as exc:
         logger.exception("status failed")
         print_payload(

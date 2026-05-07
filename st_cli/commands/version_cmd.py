@@ -101,11 +101,12 @@ def _resolve_via_autocomplete(
     pick_1based: int | None,
     pick_strategy: str,
     platform: str,
+    csrf_token: str | None,
 ) -> PipelineFailure | PipelineDisambiguation | tuple[dict[str, Any], str, str, list[str]]:
     """Return ``(chosen, resolved_platform, app_id, warnings)`` or failure/disambiguation."""
     plat = _normalize_platform(platform)
     search_term, warnings = prepare_search_term(raw_query)
-    candidates = autocomplete_search(client, search_term, limit=20)
+    candidates = autocomplete_search(client, search_term, limit=20, csrf_token=csrf_token)
     if not candidates:
         return PipelineFailure(
             "not_found",
@@ -292,6 +293,7 @@ def version(
                     pick_1based=pick,
                     pick_strategy=pick_strategy,
                     platform=platform,
+                    csrf_token=csrf_token,
                 )
                 if isinstance(resolved, PipelineFailure):
                     print_payload(
