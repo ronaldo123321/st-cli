@@ -52,6 +52,22 @@ st login --json
 
 3. **看错误详情**：若是 403，重点看 `st status --json` 返回里的 `response_headers` / `body_preview`；如果出现 Cloudflare 相关头（例如 `cf-ray`），可能是网络/WAF 限制，换网络或稍后重试。
 
+### `st status` / `st fetch` 报 422 或提示缺少 CSRF
+
+Sensor Tower 近期开始要求部分 GET 接口也携带 `x-csrf-token`，包括 `st status` 与 `st fetch` / `st snapshot` 入口依赖的 autocomplete。`sensortower-st-cli>=0.2.1` 会在调用这些 GET 接口前从网页端抓取 CSRF token 并自动附加请求头。
+
+如果你还在使用 `0.2.0` 或更早版本，遇到 `HTTP 422` 时请升级：
+
+```bash
+uv tool upgrade sensortower-st-cli
+```
+
+升级后重新执行：
+
+```bash
+st status --json
+```
+
 ## 区域维度（`fetch` / `batch` / `snapshot` / `landscape`）
 
 调用 Sensor Tower facets 时，工具会把一组 **国家/地区代码**（两字母，与 ST 一致）传给接口。默认行为如下：
@@ -304,4 +320,5 @@ uv run ruff check st_cli tests
 ## 说明
 
 - 月度收入/份额相关数据来自 ST 的 `/api/*`，通常需要多次请求拼装结果，请避免并发过猛。
+- `0.2.1` 起会为 autocomplete/status 等 GET 入口自动附加 Sensor Tower 要求的 `x-csrf-token`。
 - 若 ST 改版导致字段变化，需调整 `st_cli/st_api.py` / `st_cli/pipeline.py` 的解析逻辑。
