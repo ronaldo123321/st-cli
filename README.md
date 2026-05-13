@@ -102,6 +102,7 @@ st fetch "QuickBooks" --json
 | `st fetch "<URL 或 应用名>"` | 自动完成 → 解析 app → 拉取 **最近 12 个月**月度收入（估算） |
 | `st version "<URL / iOS 数字 id / 包名 / 应用名>"` | 拉取 ST **Update Timeline**（`/api/ios|android/app_update/get_app_update_history`），默认仅近 30 天 |
 | `st batch -f queries.txt` | 对文件中每行执行与 `fetch` 相同的流水线（每行取自动完成第一条） |
+| `st aso-keywords ...` | 自动化 Store Marketing → ASO Keywords：添加关键词、下载 CSV |
 | `st snapshot ...` | 按 **任意起止日期** 拉取单 app 或竞品列表的区间快照，支持 raw / landscape / both 三种输出 |
 | `st snapshot-report ...` | 把 `st snapshot --json` 产出的 JSON 渲染成 Markdown 摘要，不再重复请求 ST |
 | `st landscape ...` | 抓取竞品格局数据（JSON/YAML），可选 `--out` 直接渲染 Markdown 报告 |
@@ -127,6 +128,195 @@ st version "https://play.google.com/store/apps/details?id=com.instagram.android"
 ```
 
 成功时 `data.versions` 为时间线列表，每项仅含 **`time`**、**`version`**、**`featured_user_feedback`**。默认只保留 **`time` 落在最近 30 天（UTC，相对当前时间）** 内的记录；可用 `--max-age-days N` 调整窗口（例如 `365` 看近一年）。`data.max_age_days` 反映本次使用的窗口。`data.platform` / `data.app_id` 标明商店与 id。多结果时需加 `--pick N`（与 `fetch` 相同）。
+
+## ASO Keywords（`st aso-keywords`）
+
+对应网页 **Store Marketing → ASO Keywords**，用于把 ASO 关键词页面上的常用动作自动化，尤其适合批量维护关键词和把页面表格数据落成 CSV 给后续分析使用。
+
+支持 4 个子命令：
+
+| 命令 | 用途 | 是否会改动 ST 页面数据 |
+|------|------|------------------------|
+| `st aso-keywords user-apps` | 列出当前账号可用的 ASO app / keyword view | 否 |
+| `st aso-keywords metadata` | 查看某个 ASO app/view 的元数据 | 否 |
+| `st aso-keywords add` | 添加关键词，对应页面右侧 `+` / Add new keywords manually | 是 |
+| `st aso-keywords export` | 下载 ASO Keywords 表格 CSV，对应右上角 `Download CSV` | 否 |
+
+### App 定位方式
+
+日常使用推荐直接传业务上熟悉的 app 标识，CLI 会自动从当前账号的 ASO app 列表里解析到 Sensor Tower 内部 keyword view id。
+
+优先推荐：
+
+- `--app-id`：iOS App Store id，例如 `6477533581`；Android 可传 package name，例如 `com.example.app`；也支持 ST unified app id。
+- `--app-name`：按当前账号 ASO app 列表里的 app 名称模糊匹配，例如 `"AI Remodel"`。
+
+高级兜底：
+
+- `--user-app-id`：Sensor Tower ASO user app / keyword view id。
+- `--keyword-view-id`：仅 `export` 使用，是 `--user-app-id` 的同义参数。
+
+`--user-app-id` / `--keyword-view-id` 一般不需要用户手动获取。它们来自页面 URL 里的 `aso_keyword_view=...`，例如：
+
+```text
+https://app.sensortower.com/store-marketing/aso/performance-tracking?...&aso_keyword_view=69bd1448c906d57604ec067a
+```
+
+如果自动匹配失败，先查看当前账号有哪些 ASO app：
+
+```bash
+st aso-keywords user-apps --json
+```
+
+常见输出字段：
+
+| 字段 | 含义 |
+|------|------|
+| `id` | Sensor Tower 内部 ASO keyword view id，可作为 `--user-app-id` / `--keyword-view-id` 兜底使用 |
+| `appId` | iOS App Store id 或 Android package name |
+| `appName` | App 名称 |
+| `os` | `ios` / `android` |
+| `country` | 默认国家 |
+| `numTerms` | 当前 ASO view 里追踪的关键词数量 |
+
+示例输出节选：
+
+```json
+{
+  "id": "69bd1448c906d57604ec067a",
+  "appId": 6477533581,
+  "appName": "AI Remodel — Interior Design",
+  "os": "ios",
+  "country": "US",
+  "numTerms": 85
+}
+```
+
+### 添加关键词
+
+```bash
+st aso-keywords add \
+  --app-id 6477533581 \
+  --os ios \
+  --country US \
+  --keyword "bible note" \
+  --keyword "sermon notes" \
+  --json
+```
+
+入参说明：
+
+| 参数 | 必填 | 说明 |
+|------|------|------|
+| `--app-id` / `--app-name` / `--user-app-id` | 三选一 | 定位要操作的 ASO app/view。推荐 `--app-id` |
+| `--os` | 否 | `ios` 或 `android`，默认 `ios` |
+| `--country` | 否 | 国家/地区代码，默认 `US` |
+| `--keyword` | 与 `--keywords-file` 二选一 | 要添加的关键词，可重复传，也可逗号分隔 |
+| `--keywords-file` | 与 `--keyword` 二选一 | 文本文件，每行一个关键词；空行和 `#` 开头行会被忽略 |
+| `--json` / `--yaml` | 否 | 输出格式 |
+
+输出说明：
+
+| 字段 | 含义 |
+|------|------|
+| `user_app_id` | CLI 实际解析到的内部 ASO view id |
+| `matched_app` | 匹配到的 app 摘要，包含 `appId` / `appName` / `os` / `country` / `numTerms` |
+| `terms` | 实际提交给 ST 的关键词列表，已去重 |
+| `result` | Sensor Tower 接口返回，例如 `{ "success": true }` |
+
+文件批量添加示例：
+
+```bash
+st aso-keywords add \
+  --app-name "AI Remodel" \
+  --country US \
+  --keywords-file ./keywords.txt \
+  --json
+```
+
+`keywords.txt` 示例：
+
+```text
+bible note
+sermon notes
+# 这一行会被忽略
+church notes
+```
+
+### 下载 CSV
+
+```bash
+st aso-keywords export \
+  --app-id 6477533581 \
+  --os ios \
+  --country US \
+  --device iphone \
+  --start 2026-02-12 \
+  --end 2026-05-12 \
+  --out ./aso-keywords.csv \
+  --json
+```
+
+入参说明：
+
+| 参数 | 必填 | 说明 |
+|------|------|------|
+| `--app-id` / `--app-name` / `--keyword-view-id` / `--user-app-id` | 四选一 | 定位要导出的 ASO app/view。推荐 `--app-id` |
+| `--os` | 否 | `ios` 或 `android`，默认 `ios` |
+| `--country` | 否 | 国家/地区代码，默认 `US` |
+| `--device` | 否 | 设备筛选，例如 `iphone` / `ipad` / `android`，默认 `iphone` |
+| `--start` | 是 | 主周期开始日期，格式 `YYYY-MM-DD` |
+| `--end` | 是 | 主周期结束日期，格式 `YYYY-MM-DD` |
+| `--comparison-start` | 否 | 对比周期开始日期；不传则自动使用上一段等长周期 |
+| `--comparison-end` | 否 | 对比周期结束日期；不传则自动使用上一段等长周期 |
+| `--search-term` | 否 | 对表格关键词做搜索过滤，可重复传 |
+| `--limit` | 否 | 导出行数上限，默认 `10000` |
+| `--out` | 与 `--stdout` 二选一 | 写入 CSV 文件 |
+| `--stdout` | 与 `--out` 二选一 | 直接把 CSV bytes 输出到 stdout |
+| `--json` / `--yaml` | 否 | `--out` 模式下输出执行结果 |
+
+日期说明：
+
+- `--start` / `--end` 对应网页左上角日期范围。
+- `--comparison-start` / `--comparison-end` 用于计算 PoP growth 等对比字段。
+- 如果不传 comparison 日期，CLI 自动使用上一段等长周期。例如 `2026-02-12` 到 `2026-05-12` 会自动对比 `2025-11-14` 到 `2026-02-11`。
+
+输出说明：
+
+| 字段 | 含义 |
+|------|------|
+| `keyword_view_id` / `user_app_id` | CLI 实际解析到的内部 ASO view id |
+| `matched_app` | 匹配到的 app 摘要 |
+| `out_file` | CSV 写入路径 |
+| `bytes` | 写入文件大小 |
+
+CSV 内容说明：
+
+- Sensor Tower 返回的是 UTF-16 LE 编码、Tab 分隔的 CSV/TSV 文件。
+- 常见列包括 `Keyword`、`Rank (for App)`、`Rank (7-Day Change)`、`Traffic Score`、`Difficulty Score`、`Opportunity Score`、`KW Downloads (Absolute)`、`KW Downloads (% of Total)`、`KW Downloads (PoP % Growth)`、`App Count`、`Keyword Type`、`Paid Search State`。
+- Excel / Numbers 一般可以直接打开；如果用脚本读取，注意指定 UTF-16。
+
+Python 读取示例：
+
+```python
+import pandas as pd
+
+df = pd.read_csv("./aso-keywords.csv", sep="\t", encoding="utf-16")
+```
+
+### 常见问题
+
+如果 `--app-name` 匹配到多个 app，命令会返回候选摘要；这时改用更完整的 `--app-name`，或直接用 `--app-id`。
+
+如果自动解析失败，先跑：
+
+```bash
+st aso-keywords user-apps --json
+```
+
+然后确认目标 app 是否已经在 Sensor Tower ASO Keywords 页面里创建过 view。如果不在列表里，CLI 不能凭空创建 ASO app view，只能操作当前账号已有的 view。
+
+> 说明：这些接口与网页端一样依赖有效登录和 CSRF。若命令返回 403，请先重新执行 `st login --json` / `st status --json`。
 
 ## 竞品格局（`st landscape`）
 

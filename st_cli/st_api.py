@@ -318,6 +318,167 @@ def get_csrf_token_for_top_apps_page(client: httpx.Client) -> str | None:
     return m.group(1)
 
 
+def get_csrf_token_for_aso_page(client: httpx.Client) -> str | None:
+    """Best-effort scrape csrf token from the Store Marketing ASO page."""
+    try:
+        r = client.get("/store-marketing/aso/performance-tracking?os=ios&edit=1")
+    except httpx.HTTPError:
+        return None
+    if r.status_code != 200:
+        return None
+    m = re.search(r'<meta\s+name="csrf-token"\s+content="([^"]+)"\s*/?>', r.text, re.IGNORECASE)
+    if not m:
+        return None
+    return m.group(1)
+
+
+def get_app_intel_user_apps(
+    client: httpx.Client,
+    *,
+    csrf_token: str | None = None,
+) -> Any:
+    """GET ASO/app-intel user apps available to the current account."""
+    headers: dict[str, str] = {}
+    if csrf_token:
+        headers["x-csrf-token"] = csrf_token
+    r = client.get("/api/app_intel/user_apps", headers=headers or None)
+    return _parse_json_response(r)
+
+
+def get_app_intel_user_app_metadata(
+    client: httpx.Client,
+    *,
+    user_app_id: str,
+    country: str = "US",
+    csrf_token: str | None = None,
+) -> Any:
+    """GET ASO metadata for a user app keyword view."""
+    headers: dict[str, str] = {}
+    if csrf_token:
+        headers["x-csrf-token"] = csrf_token
+    q = urllib.parse.urlencode({"country": country.upper()})
+    r = client.get(f"/api/app_intel/user_apps/{user_app_id}/metadata?{q}", headers=headers or None)
+    return _parse_json_response(r)
+
+
+def lookup_aso_keywords(
+    client: httpx.Client,
+    *,
+    os: str,
+    user_app_id: str,
+    country: str,
+    terms: list[str],
+    csrf_token: str | None = None,
+) -> Any:
+    """POST ASO keyword lookup/add endpoint used by Store Marketing -> ASO Keywords."""
+    headers: dict[str, str] = dict(POST_JSON_HEADERS)
+    if csrf_token:
+        headers["x-csrf-token"] = csrf_token
+    body = {
+        "user_app_id": user_app_id,
+        "country": country.upper(),
+        "terms": [term for term in terms if term.strip()],
+    }
+    r = client.post(f"/api/{os}/keywords/lookup", json=body, headers=headers)
+    return _parse_json_response(r)
+
+
+def download_aso_keywords_csv(
+    client: httpx.Client,
+    *,
+    keyword_view_id: str,
+    os: str,
+    country: str,
+    device: str,
+    start_date: str,
+    end_date: str,
+    comparison_start_date: str,
+    comparison_end_date: str,
+    limit: int = 10000,
+    search_terms: list[str] | None = None,
+    csrf_token: str | None = None,
+) -> bytes:
+    """POST ASO Keywords CSV export request and return the CSV bytes."""
+    headers: dict[str, str] = dict(POST_JSON_HEADERS)
+    if csrf_token:
+        headers["x-csrf-token"] = csrf_token
+    regions = [country.upper()]
+    devices = [device]
+    search_terms = search_terms or []
+    try:
+        inner_start = (datetime.strptime(end_date, "%Y-%m-%d").date() - timedelta(days=7)).isoformat()
+    except ValueError:
+        inner_start = end_date
+    inner_filters = {
+        "keyword_view_id": keyword_view_id,
+        "start_date": inner_start,
+        "end_date": end_date,
+        "comparison_start_date": comparison_start_date,
+        "comparison_end_date": comparison_end_date,
+        "regions": regions,
+        "devices": devices,
+        "os": os,
+        "search_terms": search_terms,
+    }
+    body = {
+        "breakdowns": [["Keyword"]],
+        "filters": {
+            "keyword_view_id": keyword_view_id,
+            "start_date": start_date,
+            "end_date": end_date,
+            "comparison_start_date": comparison_start_date,
+            "comparison_end_date": comparison_end_date,
+            "regions": regions,
+            "devices": devices,
+            "os": os,
+            "search_terms": search_terms,
+            "keywords": {
+                "in": {
+                    "breakdowns": [["keyword"]],
+                    "facets": [
+                        {"facet": "keyword", "alias": "keyword"},
+                        {"facet": "keyword_rank", "alias": "keyword_rank"},
+                        {"facet": "keyword_traffic", "alias": "keyword_traffic"},
+                    ],
+                    "filters": inner_filters,
+                    "limit": limit,
+                    "order_by": [{"keyword_rank": "asc"}, {"keyword_traffic": "desc"}],
+                }
+            },
+        },
+        "facets": [
+            {"facet": "keyword", "alias": "Keyword"},
+            {"facet": "keyword_rank", "alias": "Rank (for App)"},
+            {"facet": "keyword_rank_7d_growth", "alias": "Rank (7-Day Change)"},
+            {"facet": "keyword_traffic", "alias": "Traffic Score"},
+            {"facet": "keyword_difficulty_score", "alias": "Difficulty Score"},
+            {"facet": "keyword_opportunity_score", "alias": "Opportunity Score"},
+            {"facet": "est_keyword_downloads", "alias": "KW Downloads (Absolute)"},
+            {
+                "facet": "est_keyword_downloads_share",
+                "alias": "KW Downloads (% of Total)",
+                "unit": "percent",
+            },
+            {
+                "facet": "est_keyword_downloads",
+                "measure": "growth",
+                "alias": "KW Downloads (PoP % Growth)",
+                "unit": "percent",
+            },
+            {"facet": "keyword_app_count", "alias": "App Count"},
+            {"facet": "keyword_type", "alias": "Keyword Type"},
+            {"facet": "keyword_density", "alias": "Density", "unit": "percent"},
+            {"facet": "keyword_paid_search_state", "alias": "Paid Search State"},
+        ],
+        "limit": limit,
+        "order_by": [{"Rank (for App)": "asc"}, {"Traffic Score": "desc"}],
+    }
+    r = client.post("/api/v2/apps/facets.csv", json=body, headers=headers)
+    if r.status_code >= 400:
+        raise RuntimeError(f"HTTP {r.status_code}: {r.text[:500]}")
+    return r.content
+
+
 def get_ios_app_update_history(
     client: httpx.Client,
     *,

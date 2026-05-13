@@ -6,6 +6,7 @@ import click
 
 from st_cli import __version__
 from st_cli.commands import (
+    aso_keywords_cmd,
     auth_cmd,
     batch_cmd,
     fetch_cmd,
@@ -35,6 +36,7 @@ cli.add_command(auth_cmd.login)
 cli.add_command(auth_cmd.logout)
 cli.add_command(status_cmd.status)
 cli.add_command(fetch_cmd.fetch)
+cli.add_command(aso_keywords_cmd.aso_keywords)
 cli.add_command(version_cmd.version)
 cli.add_command(batch_cmd.batch)
 cli.add_command(snapshot_cmd.snapshot)
