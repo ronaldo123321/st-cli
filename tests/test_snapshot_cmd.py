@@ -90,14 +90,17 @@ def _sample_snapshot_payload(raw_query: str) -> dict:
 
 def test_snapshot_single_query_outputs_raw_shape(monkeypatch):
     runner = CliRunner()
+    seen_kwargs = []
 
     monkeypatch.setattr(snapshot_cmd, "get_credential", lambda: _Cred())
     monkeypatch.setattr(snapshot_cmd, "create_st_client", lambda cookies: _ClientContext())
-    monkeypatch.setattr(
-        snapshot_cmd,
-        "run_snapshot_pipeline",
-        lambda client, raw_query, **kwargs: PipelineSuccess(payload=_sample_snapshot_payload(raw_query)),
-    )
+
+    def fake_run_snapshot_pipeline(client, raw_query, **kwargs):
+        del client
+        seen_kwargs.append(kwargs)
+        return PipelineSuccess(payload=_sample_snapshot_payload(raw_query))
+
+    monkeypatch.setattr(snapshot_cmd, "run_snapshot_pipeline", fake_run_snapshot_pipeline)
 
     result = runner.invoke(
         cli,
@@ -108,6 +111,8 @@ def test_snapshot_single_query_outputs_raw_shape(monkeypatch):
             "2026-01-01",
             "--end-date",
             "2026-01-31",
+            "--country",
+            "US,JP",
             "--json",
         ],
     )
@@ -116,6 +121,8 @@ def test_snapshot_single_query_outputs_raw_shape(monkeypatch):
     payload = json.loads(result.output)
     assert payload["ok"] is True
     assert payload["data"]["source"]["shape"] == "raw"
+    assert payload["data"]["source"]["facet_regions"] == ["US", "JP"]
+    assert seen_kwargs[0]["facet_regions"] == ["US", "JP"]
     item = payload["data"]["raw"]["items"][0]
     assert item["query"] == "https://apps.apple.com/us/app/duolingo/id570060128"
     assert item["snapshot_window"]["start_date"] == "2026-01-01"

@@ -336,11 +336,13 @@ Sage	https://apps.apple.com/us/app/sage/id1470884689
 ```bash
 st landscape \
   --competitors-file /path/to/competitors.txt \
+  --country US \
   --limit 6 \
   --json \
   --out report.md
 ```
 
+- **`--country` / `--region`**：可选，指定收入、下载量、MAU 和市场份额的区域口径。可重复传，也可逗号分隔，例如 `--country US,JP,GB`；不传则使用默认全球区域列表（见“区域维度”）。
 - 输出的核心列（报告与 JSON 都会包含）：
   - **`{YYYY-MM} Revenue`**：**上一个自然月**的收入（USD）
   - **`6M Growth`**：相对 **上一个自然月的 6 个月前** 的增长率（百分比）
@@ -397,6 +399,7 @@ st landscape --competitors-file /path/to/competitors.txt --json | st landscape-r
 st snapshot "https://apps.apple.com/us/app/duolingo/id570060128" \
   --start-date 2026-01-01 \
   --end-date 2026-01-31 \
+  --country US \
   --json
 ```
 
@@ -407,11 +410,13 @@ st snapshot \
   --competitors-file /path/to/competitors.txt \
   --start-date 2026-01-01 \
   --end-date 2026-01-31 \
+  --country US \
   --shape both \
   --json
 ```
 
 - **输入来源**：二选一，传 `QUERY` 或 `--competitors-file`
+- **区域口径**：`--country` / `--region` 可选，可重复传或逗号分隔，例如 `--country US,JP`。它会影响 snapshot 里的收入、下载量、MAU、WAU，以及 `market_share_in_window` 的分母；不传则使用默认全球区域列表。
 - **`--shape raw`**：返回 `data.raw.items[]`
 - **`--shape landscape`**：返回 `data.landscape.competitors[]`
 - **`--shape both`**：两种结构都返回，便于脚本和竞品分析共用

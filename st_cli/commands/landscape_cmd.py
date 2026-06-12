@@ -605,6 +605,20 @@ def _parse_competitor_line(line: str) -> tuple[str, str] | None:
     return (name, url) if name and url else None
 
 
+def _parse_regions(countries: tuple[str, ...], regions: tuple[str, ...]) -> list[str]:
+    values: list[str] = []
+    for raw in (*countries, *regions):
+        for part in raw.split(","):
+            token = part.strip()
+            if token:
+                values.append(token)
+    if not values:
+        return list(DEFAULT_FACET_REGIONS)
+    if len(values) == 1 and values[0].lower() in {"global", "world", "worldwide", "ww"}:
+        return list(DEFAULT_FACET_REGIONS)
+    return [value.upper() for value in values]
+
+
 @click.command("landscape")
 @click.option(
     "--rdt-report",
@@ -623,6 +637,8 @@ def _parse_competitor_line(line: str) -> tuple[str, str] | None:
     help="Competitors file. Each line: name<TAB>store_url (or name, url).",
 )
 @click.option("--limit", "limit", type=int, default=12, show_default=True, help="Max competitors to include")
+@click.option("--country", "countries", multiple=True, help="Country/region code, e.g. US. Repeat or comma-separate.")
+@click.option("--region", "regions", multiple=True, help="Alias for --country; accepts global/worldwide.")
 @click.option(
     "--pick-strategy",
     "pick_strategy",
@@ -647,6 +663,8 @@ def _parse_competitor_line(line: str) -> tuple[str, str] | None:
 def landscape(
     rdt_report: Path | None,
     limit: int,
+    countries: tuple[str, ...],
+    regions: tuple[str, ...],
     competitors_file: Path | None,
     pick_strategy: str,
     market_share_category_override: int | None,
@@ -674,6 +692,7 @@ def landscape(
 
     competitors: list[CompetitorRow] = []
     source_input: dict[str, Any] = {}
+    facet_regions = _parse_regions(countries, regions)
 
     if rdt_report is not None:
         md = rdt_report.read_text(encoding="utf-8", errors="ignore")
@@ -762,6 +781,7 @@ def landscape(
                     include_market_share=True,
                     market_share_category_override=market_share_category_override,
                     market_share_month_key=month_key,
+                    facet_regions=facet_regions,
                 )
             except RuntimeError as exc:
                 logger.exception("fetch failed for %s", row.name)
@@ -988,7 +1008,7 @@ def landscape(
             **source_input,
             "month": month_key,
             "as_of": month_end.isoformat(),
-            "facet_regions": DEFAULT_FACET_REGIONS,
+            "facet_regions": facet_regions,
             "market_share_category_override": market_share_category_override,
         },
         "competitors": out_rows,
@@ -999,4 +1019,3 @@ def landscape(
         out_path.write_text(report_md, encoding="utf-8")
         data["report"] = {"path": str(out_path)}
     print_payload(success_payload(data), as_json=as_json, as_yaml=as_yaml)
-

@@ -367,6 +367,7 @@ def collect_monthly_metrics(
     *,
     csrf_token: str | None,
     month_windows: list[tuple[date, date]],
+    facet_regions: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Fill monthly revenue/downloads/MAU for given calendar months (newest first)."""
     monthly_revenue: list[dict[str, Any]] = []
@@ -386,6 +387,7 @@ def collect_monthly_metrics(
                 prev_start,
                 prev_end,
                 csrf_token=csrf_token,
+                regions=facet_regions,
             )
             rev = extract_revenue_absolute_from_facets_v2_rows(rows)
             downloads = extract_downloads_absolute_from_facets_v2_rows(rows)
@@ -482,6 +484,7 @@ def _empty_market_share_payload(start_date: date, end_date: date) -> dict[str, A
         "top_apps_limit": MARKET_SHARE_TOP_APPS_LIMIT_DEFAULT,
         "category": None,
         "category_candidates": [],
+        "facet_regions": DEFAULT_FACET_REGIONS,
     }
 
 
@@ -529,7 +532,9 @@ def _compute_market_share_for_window(
     csrf_token: str | None,
     market_share_category_override: int | None = None,
     market_share_top_apps_limit: int = MARKET_SHARE_TOP_APPS_LIMIT_DEFAULT,
+    facet_regions: list[str] | None = None,
 ) -> dict[str, Any]:
+    selected_regions = facet_regions or DEFAULT_FACET_REGIONS
     category_ids = _resolve_market_share_category_ids(
         client,
         chosen,
@@ -546,6 +551,7 @@ def _compute_market_share_for_window(
         end_date.isoformat(),
         market_share_category_id,
         market_share_top_apps_limit,
+        tuple(selected_regions),
     )
     if cache_key in _MARKET_SHARE_TOTAL_CACHE:
         denom_total = _MARKET_SHARE_TOTAL_CACHE[cache_key]
@@ -557,7 +563,7 @@ def _compute_market_share_for_window(
             end_date=end_date,
             comparison_attribute="absolute",
             category=market_share_category_id,
-            regions=DEFAULT_FACET_REGIONS,
+            regions=selected_regions,
             limit=market_share_top_apps_limit,
             csrf_token=csrf_token,
         )
@@ -569,6 +575,7 @@ def _compute_market_share_for_window(
             comparison_start,
             comparison_end,
             csrf_token=csrf_token,
+            regions=selected_regions,
         )
         denom_total = extract_total_revenue_absolute_from_facets_v2_rows(denom_rows)
         if denom_total is None:
@@ -587,6 +594,7 @@ def _compute_market_share_for_window(
         "top_apps_limit": market_share_top_apps_limit,
         "category": market_share_category_id,
         "category_candidates": category_ids,
+        "facet_regions": selected_regions,
     }
 
 
@@ -682,8 +690,10 @@ def run_snapshot_pipeline(
     pick_strategy: str = "heuristic",
     market_share_category_override: int | None = None,
     market_share_top_apps_limit: int = MARKET_SHARE_TOP_APPS_LIMIT_DEFAULT,
+    facet_regions: list[str] | None = None,
 ) -> PipelineSuccess | PipelineDisambiguation | PipelineFailure:
     """Resolve QUERY to ST app and pull one arbitrary-date snapshot."""
+    selected_regions = facet_regions or DEFAULT_FACET_REGIONS
     search_candidates = prepare_search_term_candidates(raw_query)
     search_term = raw_query.strip()
     warnings: list[str] = []
@@ -757,6 +767,7 @@ def run_snapshot_pipeline(
             comparison_start,
             comparison_end,
             csrf_token=csrf_token,
+            regions=selected_regions,
         )
     except RuntimeError as exc:
         return PipelineFailure("upstream_error", str(exc), {"query": raw_query})
@@ -822,6 +833,7 @@ def run_snapshot_pipeline(
             "end_date": end_date.isoformat(),
             "comparison_start_date": comparison_start.isoformat(),
             "comparison_end_date": comparison_end.isoformat(),
+            "facet_regions": selected_regions,
         },
         "snapshot": {
             "revenue_usd": snapshot_revenue_usd,
@@ -869,6 +881,7 @@ def run_snapshot_pipeline(
             csrf_token=csrf_token,
             market_share_category_override=market_share_category_override,
             market_share_top_apps_limit=market_share_top_apps_limit,
+            facet_regions=selected_regions,
         )
     except (RuntimeError, httpx.HTTPError) as exc:
         warnings.append(f"market_share_failed:{exc}")
@@ -886,6 +899,7 @@ def run_fetch_pipeline(
     market_share_category_override: int | None = None,
     market_share_top_apps_limit: int = MARKET_SHARE_TOP_APPS_LIMIT_DEFAULT,
     market_share_month_key: str | None = None,
+    facet_regions: list[str] | None = None,
 ) -> PipelineSuccess | PipelineDisambiguation | PipelineFailure:
     """Resolve QUERY to ST app and pull monthly revenue (see ``MONTH_WINDOW_MONTHS``).
 
@@ -898,6 +912,7 @@ def run_fetch_pipeline(
     Returns:
         Success with ``payload``, disambiguation request, or failure.
     """
+    selected_regions = facet_regions or DEFAULT_FACET_REGIONS
     csrf_token = get_csrf_token_for_top_apps_page(client)
     search_term, warnings = prepare_search_term(raw_query)
     candidates = autocomplete_search(client, search_term, limit=20, csrf_token=csrf_token)
@@ -967,6 +982,7 @@ def run_fetch_pipeline(
         warnings,
         csrf_token=csrf_token,
         month_windows=month_windows,
+        facet_regions=selected_regions,
     )
 
     monthly_revenue = next(it["monthly_estimates"] for it in metrics if it["type"] == "revenue")
@@ -991,6 +1007,7 @@ def run_fetch_pipeline(
             comparison_start,
             comparison_end,
             csrf_token=csrf_token,
+            regions=selected_regions,
         )
         first_release_date_us = extract_first_release_date_us_from_facets_v2_rows(num_rows)
     except RuntimeError as exc:
@@ -1042,6 +1059,7 @@ def run_fetch_pipeline(
         "mau": {"monthly_estimates": monthly_mau, "window_months": MONTH_WINDOW_MONTHS},
         "comments": comments,
         "warnings": warnings,
+        "facet_regions": selected_regions,
     }
 
     if include_market_share:
@@ -1089,7 +1107,7 @@ def run_fetch_pipeline(
                     numerator = v if isinstance(v, (int, float)) else None
                     break
 
-        cache_key = (as_of_month_key, market_share_category_id)
+        cache_key = (as_of_month_key, market_share_category_id, tuple(selected_regions))
         if cache_key in _MARKET_SHARE_TOTAL_CACHE:
             denom_total = _MARKET_SHARE_TOTAL_CACHE[cache_key]
         else:
@@ -1103,7 +1121,7 @@ def run_fetch_pipeline(
                 end_date=as_of_month_end,
                 comparison_attribute="absolute",
                 category=market_share_category_id,
-                regions=DEFAULT_FACET_REGIONS,
+                regions=selected_regions,
                 limit=market_share_top_apps_limit,
                 csrf_token=csrf_token,
             )
@@ -1115,6 +1133,7 @@ def run_fetch_pipeline(
                 prev_start,
                 prev_end,
                 csrf_token=csrf_token,
+                regions=selected_regions,
             )
             denom_total = extract_total_revenue_absolute_from_facets_v2_rows(denom_rows)
             if denom_total is None:
@@ -1134,6 +1153,7 @@ def run_fetch_pipeline(
             "top_apps_limit": market_share_top_apps_limit,
             "category": market_share_category_id,
             "category_candidates": category_ids,
+            "facet_regions": selected_regions,
         }
 
     return PipelineSuccess(payload=payload)

@@ -53,6 +53,20 @@ def _parse_competitor_line(line: str) -> tuple[str, str] | None:
     return name, url
 
 
+def _parse_regions(countries: tuple[str, ...], regions: tuple[str, ...]) -> list[str]:
+    values: list[str] = []
+    for raw in (*countries, *regions):
+        for part in raw.split(","):
+            token = part.strip()
+            if token:
+                values.append(token)
+    if not values:
+        return list(DEFAULT_FACET_REGIONS)
+    if len(values) == 1 and values[0].lower() in {"global", "world", "worldwide", "ww"}:
+        return list(DEFAULT_FACET_REGIONS)
+    return [value.upper() for value in values]
+
+
 def _build_raw_item(query: str, payload: dict[str, Any]) -> dict[str, Any]:
     input_obj = payload.get("input") if isinstance(payload.get("input"), dict) else {}
     resolved_query = input_obj.get("raw") if isinstance(input_obj.get("raw"), str) else query
@@ -137,6 +151,7 @@ def _run_snapshot_with_fallback(
     end_date: date,
     pick_strategy: str,
     allow_name_fallback: bool,
+    facet_regions: list[str],
 ) -> PipelineSuccess | PipelineDisambiguation | PipelineFailure:
     result = run_snapshot_pipeline(
         client,
@@ -144,6 +159,7 @@ def _run_snapshot_with_fallback(
         start_date=start_date,
         end_date=end_date,
         pick_strategy=pick_strategy,
+        facet_regions=facet_regions,
     )
     if not allow_name_fallback:
         return result
@@ -159,6 +175,7 @@ def _run_snapshot_with_fallback(
         end_date=end_date,
         match_query=lookup_query,
         pick_strategy=pick_strategy,
+        facet_regions=facet_regions,
     )
     return fallback_result
 
@@ -175,6 +192,8 @@ def _run_snapshot_with_fallback(
 )
 @click.option("--start-date", "start_date_text", required=True, help="Snapshot window start date (YYYY-MM-DD).")
 @click.option("--end-date", "end_date_text", required=True, help="Snapshot window end date (YYYY-MM-DD).")
+@click.option("--country", "countries", multiple=True, help="Country/region code, e.g. US. Repeat or comma-separate.")
+@click.option("--region", "regions", multiple=True, help="Alias for --country; accepts global/worldwide.")
 @click.option(
     "--shape",
     "shape",
@@ -198,6 +217,8 @@ def snapshot(
     competitors_file: Path | None,
     start_date_text: str,
     end_date_text: str,
+    countries: tuple[str, ...],
+    regions: tuple[str, ...],
     shape: str,
     pick_strategy: str,
     as_json: bool,
@@ -249,6 +270,8 @@ def snapshot(
         )
         raise SystemExit(1)
 
+    facet_regions = _parse_regions(countries, regions)
+
     cred = get_credential()
     if not cred or not cred.cookies:
         print_payload(
@@ -267,7 +290,7 @@ def snapshot(
         "shape": shape,
         "start_date": start_date.isoformat(),
         "end_date": end_date.isoformat(),
-        "facet_regions": DEFAULT_FACET_REGIONS,
+        "facet_regions": facet_regions,
     }
     if query:
         queries.append((query, query if _looks_like_url(query) else None))
@@ -307,6 +330,7 @@ def snapshot(
                     end_date=end_date,
                     pick_strategy=pick_strategy,
                     allow_name_fallback=competitors_file is not None,
+                    facet_regions=facet_regions,
                 )
                 if isinstance(result, PipelineFailure):
                     if query:

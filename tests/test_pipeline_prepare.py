@@ -60,7 +60,7 @@ def test_snapshot_pipeline_falls_back_to_ios_slug_when_id_returns_no_candidates(
     monkeypatch.setattr("st_cli.pipeline.get_csrf_token_for_top_apps_page", lambda client: None)
     monkeypatch.setattr(
         "st_cli.pipeline.apps_facets_v2_month_slice",
-        lambda client, app_ids, start_date, end_date, comparison_start, comparison_end, csrf_token=None: [
+        lambda client, app_ids, start_date, end_date, comparison_start, comparison_end, csrf_token=None, regions=None: [
             {
                 "appId": None,
                 "revenueAbsolute": 123400,
@@ -118,7 +118,7 @@ def test_snapshot_pipeline_uses_url_slug_for_heuristic_disambiguation(monkeypatc
     monkeypatch.setattr("st_cli.pipeline.get_csrf_token_for_top_apps_page", lambda client: None)
     monkeypatch.setattr(
         "st_cli.pipeline.apps_facets_v2_month_slice",
-        lambda client, app_ids, start_date, end_date, comparison_start, comparison_end, csrf_token=None: [
+        lambda client, app_ids, start_date, end_date, comparison_start, comparison_end, csrf_token=None, regions=None: [
             {
                 "appId": None,
                 "revenueAbsolute": 123400,
@@ -149,6 +149,9 @@ def test_snapshot_pipeline_uses_url_slug_for_heuristic_disambiguation(monkeypatc
 
 
 def test_snapshot_pipeline_includes_growth_and_market_share(monkeypatch):
+    facet_regions_seen: list[list[str] | None] = []
+    top_regions_seen: list[list[str]] = []
+
     def fake_autocomplete_search(client: httpx.Client, term: str, limit: int = 20, csrf_token: str | None = None):
         del client, limit, csrf_token
         assert term == "Duolingo"
@@ -171,8 +174,10 @@ def test_snapshot_pipeline_includes_growth_and_market_share(monkeypatch):
         comparison_start,
         comparison_end,
         csrf_token=None,
+        regions=None,
     ):
         del client, start_date, end_date, comparison_start, comparison_end, csrf_token
+        facet_regions_seen.append(regions)
         if app_ids == [570060128]:
             return [
                 {
@@ -205,10 +210,9 @@ def test_snapshot_pipeline_includes_growth_and_market_share(monkeypatch):
     _patch_empty_update_history(monkeypatch)
     monkeypatch.setattr(
         "st_cli.pipeline.top_sub_app_ids",
-        lambda client, measure, start_date, end_date, comparison_attribute, category, regions, limit, csrf_token=None: [
-            111,
-            222,
-        ],
+        lambda client, measure, start_date, end_date, comparison_attribute, category, regions, limit, csrf_token=None: (
+            top_regions_seen.append(regions) or [111, 222]
+        ),
     )
 
     with httpx.Client(base_url="https://example.com") as client:
@@ -217,6 +221,7 @@ def test_snapshot_pipeline_includes_growth_and_market_share(monkeypatch):
             "Duolingo",
             start_date=date(2026, 3, 9),
             end_date=date(2026, 3, 22),
+            facet_regions=["US"],
         )
 
     assert isinstance(result, PipelineSuccess)
@@ -235,3 +240,5 @@ def test_snapshot_pipeline_includes_growth_and_market_share(monkeypatch):
     assert vt["platform"] == "ios"
     assert vt["reference_end_date"] == "2026-03-22"
     assert vt["max_age_days"] == 30
+    assert facet_regions_seen == [["US"], ["US"]]
+    assert top_regions_seen == [["US"]]
