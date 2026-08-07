@@ -561,7 +561,7 @@ def _update_data_rows_from_app_update_payload(raw: Any) -> list[Any]:
 
 
 def slim_app_update_timeline_entries(raw: Any) -> list[dict[str, Any]]:
-    """Keep only ``time``, ``version``, and ``featured_user_feedback`` per timeline row.
+    """Keep core fields per timeline row.
 
     Sensor Tower returns ``update_data`` as a list of ``[iso_timestamp, detail_object]`` pairs.
 
@@ -569,8 +569,9 @@ def slim_app_update_timeline_entries(raw: Any) -> list[dict[str, Any]]:
         raw: Parsed JSON from ``get_ios_app_update_history`` / ``get_android_app_update_history``.
 
     Returns:
-        One dict per row with keys ``time``, ``version``, ``featured_user_feedback`` (values may
-        be ``null`` when absent).
+        One dict per row with keys ``time``, ``version``, ``featured_user_feedback``,
+        ``name``, ``description``, ``subtitle``, ``icon``, ``screenshot``,
+        ``top_in_app_purchase``, ``events`` (values may be ``null`` when absent).
     """
     rows = _update_data_rows_from_app_update_payload(raw)
     out: list[dict[str, Any]] = []
@@ -586,6 +587,13 @@ def slim_app_update_timeline_entries(raw: Any) -> list[dict[str, Any]]:
                 "time": ts,
                 "version": detail.get("version"),
                 "featured_user_feedback": detail.get("featured_user_feedback"),
+                "name": detail.get("name"),
+                "description": detail.get("description"),
+                "subtitle": detail.get("subtitle"),
+                "icon": detail.get("icon"),
+                "screenshot": detail.get("screenshot"),
+                "top_in_app_purchase": detail.get("top_in_app_purchase"),
+                "events": detail.get("events"),
             }
         )
     return out
