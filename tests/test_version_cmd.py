@@ -73,7 +73,7 @@ def test_version_ios_numeric_skips_autocomplete(monkeypatch):
     assert data["ok"] is True
     assert data["data"]["platform"] == "ios"
     assert data["data"]["app_id"] == "389801252"
-    assert data["data"]["max_age_days"] == 30
+    assert data["data"]["max_age_days"] == 180
     assert len(data["data"]["versions"]) == 1
     assert data["data"]["versions"][0]["time"] == recent
     assert data["data"]["versions"][0]["version"]["after"] == "277.0"
@@ -156,6 +156,13 @@ def test_slim_app_update_timeline_nested_update_history():
             "time": "2024-01-01T00:00:00Z",
             "version": None,
             "featured_user_feedback": {"rating": 5},
+            "name": None,
+            "description": "strip",
+            "subtitle": None,
+            "icon": None,
+            "screenshot": None,
+            "top_in_app_purchase": None,
+            "events": None,
         }
     ]
 
