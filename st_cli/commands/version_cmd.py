@@ -208,9 +208,9 @@ def _resolve_via_autocomplete(
     "--max-age-days",
     "max_age_days",
     type=int,
-    default=30,
+    default=180,
     show_default=True,
-    help="Only include rows whose time is within this many days (UTC); default ~one month.",
+    help="Only include rows whose time is within this many days (UTC); default ~six months.",
 )
 @click.option(
     "--pick",

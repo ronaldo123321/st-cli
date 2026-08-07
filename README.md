@@ -100,7 +100,7 @@ st fetch "QuickBooks" --json
 | `st logout` | 删除已保存的凭据文件 |
 | `st status` | 用当前凭据探测 ST API 是否可用 |
 | `st fetch "<URL 或 应用名>"` | 自动完成 → 解析 app → 拉取 **最近 12 个月**月度收入（估算） |
-| `st version "<URL / iOS 数字 id / 包名 / 应用名>"` | 拉取 ST **Update Timeline**（`/api/ios|android/app_update/get_app_update_history`），默认仅近 30 天 |
+| `st version "<URL / iOS 数字 id / 包名 / 应用名>"` | 拉取 ST **Update Timeline**（`/api/ios|android/app_update/get_app_update_history`），默认仅近 180 天 |
 | `st batch -f queries.txt` | 对文件中每行执行与 `fetch` 相同的流水线（每行取自动完成第一条） |
 | `st aso-keywords ...` | 自动化 Store Marketing → ASO Keywords：添加关键词、下载 CSV |
 | `st snapshot ...` | 按 **任意起止日期** 拉取单 app 或竞品列表的区间快照，支持 raw / landscape / both 三种输出 |
@@ -127,7 +127,7 @@ st version "https://play.google.com/store/apps/details?id=com.instagram.android"
 
 ```
 
-成功时 `data.versions` 为时间线列表，每项仅含 **`time`**、**`version`**、**`featured_user_feedback`**。默认只保留 **`time` 落在最近 30 天（UTC，相对当前时间）** 内的记录；可用 `--max-age-days N` 调整窗口（例如 `365` 看近一年）。`data.max_age_days` 反映本次使用的窗口。`data.platform` / `data.app_id` 标明商店与 id。多结果时需加 `--pick N`（与 `fetch` 相同）。
+成功时 `data.versions` 为时间线列表，每项包含 **`time`**、**`version`**、**`featured_user_feedback`**、**`name`**、**`description`**、**`subtitle`**、**`icon`**、**`screenshot`**、**`top_in_app_purchase`**、**`events`**。默认只保留 **`time` 落在最近 180 天（UTC，相对当前时间）** 内的记录；可用 `--max-age-days N` 调整窗口（例如 `365` 看近一年）。`data.max_age_days` 反映本次使用的窗口。`data.platform` / `data.app_id` 标明商店与 id。多结果时需加 `--pick N`（与 `fetch` 相同）。
 
 ## ASO Keywords（`st aso-keywords`）
 
