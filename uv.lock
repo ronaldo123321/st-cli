@@ -322,7 +322,7 @@ wheels = [
 
 [[package]]
 name = "sensortower-st-cli"
-version = "0.2.3"
+version = "0.2.6"
 source = { editable = "." }
 dependencies = [
     { name = "browser-cookie3" },
